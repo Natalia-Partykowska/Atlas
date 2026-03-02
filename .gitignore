@@ -1,0 +1,27 @@
+node_modules
+dist
+*.log
+.DS_Store
+
+# Environment variables
+.env
+.env.*
+.env.local
+.env.*.local
+
+# Build artifacts
+*.tsbuildinfo
+
+# Claude Code
+.claude/
+
+# Project planning / context files
+CLAUDE.md
+PLAN.md
+
+# Personal / private files
+claude_init.md
+claude_resources_do_nauki.md
+plan_dzialania.txt
+miodek_dla_natalii_do_przeczytania.md
+miodek_do_przeczytania_jako_pierwszy.txt
