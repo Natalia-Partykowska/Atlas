@@ -1,13 +1,13 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import * as maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { useAtlasStore } from '@/stores/useAtlasStore'
+import { useDataLayer } from '@/hooks/useDataLayer'
+import { NO_DATA_COLOR } from '@/lib/mapPaint'
 
 const COLORS = {
   ocean: '#0D1929',
-  land: '#1E2A3A',
   border: '#2A3A4E',
-  hoverFill: '#2E4A6A',
 }
 
 // Degrees per second — Earth-like westward drift
@@ -17,8 +17,13 @@ export default function Map() {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<maplibregl.Map | null>(null)
   const hoveredIdRef = useRef<string | null>(null)
+  const [isMapLoaded, setIsMapLoaded] = useState(false)
+
   const setTooltip = useAtlasStore((s) => s.setTooltip)
   const setSelectedCountry = useAtlasStore((s) => s.setSelectedCountry)
+
+  // Wire data layer painting — reacts to activeLayerId changes
+  useDataLayer(mapRef, isMapLoaded)
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return
@@ -54,25 +59,21 @@ export default function Map() {
     map.touchZoomRotate.disableRotation()
 
     map.on('load', () => {
-      // Add country boundaries source
+      // Country boundaries source
       map.addSource('countries', {
         type: 'geojson',
         data: '/ne_110m_countries.geojson',
         generateId: true,
       })
 
-      // Country fill layer
+      // Country fill layer — driven by data (setPaintProperty updates this)
       map.addLayer({
         id: 'country-fills',
         type: 'fill',
         source: 'countries',
         paint: {
-          'fill-color': [
-            'case',
-            ['boolean', ['feature-state', 'hover'], false],
-            COLORS.hoverFill,
-            COLORS.land,
-          ],
+          'fill-color': NO_DATA_COLOR,
+          'fill-color-transition': { duration: 400, delay: 0 },
           'fill-opacity': 1,
         },
       })
@@ -88,6 +89,25 @@ export default function Map() {
         },
       })
 
+      // Hover highlight — semi-transparent white overlay
+      map.addLayer({
+        id: 'country-hover',
+        type: 'fill',
+        source: 'countries',
+        paint: {
+          'fill-color': '#FFFFFF',
+          'fill-opacity': [
+            'case',
+            ['boolean', ['feature-state', 'hover'], false],
+            0.15,
+            0,
+          ],
+        },
+      })
+
+      // Signal that the map is ready for data painting
+      setIsMapLoaded(true)
+
       // --- Auto-scroll animation ---
       let isPaused = false
       let lastTimestamp: number | null = null
@@ -98,7 +118,7 @@ export default function Map() {
         if (resumeTimer) clearTimeout(resumeTimer)
         resumeTimer = setTimeout(() => {
           isPaused = false
-          lastTimestamp = null // prevent position jump on resume
+          lastTimestamp = null
         }, ms)
       }
 
@@ -116,17 +136,12 @@ export default function Map() {
 
       animFrameId = requestAnimationFrame(animate)
 
-      // Pause while user is dragging
       map.on('mousedown', () => {
         isPaused = true
         lastTimestamp = null
         if (resumeTimer) clearTimeout(resumeTimer)
       })
-
-      // Resume 5s after releasing
       map.on('mouseup', () => resumeAfter(5000))
-
-      // Also handle touch
       map.on('touchstart', () => {
         isPaused = true
         lastTimestamp = null
@@ -153,8 +168,8 @@ export default function Map() {
         map.getCanvas().style.cursor = 'pointer'
 
         const name = feature.properties?.NAME || ''
-        const iso = feature.properties?.ISO_A3 || ''
-
+        // ISO_A3_EH is more complete — ISO_A3 is '-99' for Norway, France, etc.
+        const iso = feature.properties?.ISO_A3_EH || feature.properties?.ISO_A3 || ''
         setTooltip({ visible: true, x: e.point.x, y: e.point.y, name, iso })
       })
 
@@ -170,10 +185,10 @@ export default function Map() {
         setTooltip({ visible: false, x: 0, y: 0, name: '', iso: '' })
       })
 
-      // --- Click interactions ---
+      // --- Click interaction ---
       map.on('click', 'country-fills', (e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
         if (!e.features || e.features.length === 0) return
-        const iso = e.features[0].properties?.ISO_A3 || null
+        const iso = e.features[0].properties?.ISO_A3_EH || e.features[0].properties?.ISO_A3 || null
         setSelectedCountry(iso)
       })
 
@@ -182,7 +197,6 @@ export default function Map() {
         if (features.length === 0) setSelectedCountry(null)
       })
 
-      // Cleanup animation on unmount
       const cleanup = () => {
         cancelAnimationFrame(animFrameId)
         if (resumeTimer) clearTimeout(resumeTimer)
@@ -195,6 +209,7 @@ export default function Map() {
     return () => {
       map.remove()
       mapRef.current = null
+      setIsMapLoaded(false)
     }
   }, [setTooltip, setSelectedCountry])
 
