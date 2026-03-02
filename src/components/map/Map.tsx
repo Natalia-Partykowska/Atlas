@@ -10,6 +10,9 @@ const COLORS = {
   hoverFill: '#2E4A6A',
 }
 
+// Degrees per second — Earth-like westward drift
+const AUTO_SCROLL_SPEED = 4
+
 export default function Map() {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<maplibregl.Map | null>(null)
@@ -39,10 +42,16 @@ export default function Map() {
       zoom: 2,
       minZoom: 1.5,
       maxZoom: 8,
+      pitch: 0,
+      maxPitch: 0,
       attributionControl: false,
     })
 
     mapRef.current = map
+
+    map.dragRotate.disable()
+    map.touchPitch.disable()
+    map.touchZoomRotate.disableRotation()
 
     map.on('load', () => {
       // Add country boundaries source
@@ -79,14 +88,59 @@ export default function Map() {
         },
       })
 
-      // Hover interaction
+      // --- Auto-scroll animation ---
+      let isPaused = false
+      let lastTimestamp: number | null = null
+      let animFrameId: number
+      let resumeTimer: ReturnType<typeof setTimeout> | null = null
+
+      const resumeAfter = (ms: number) => {
+        if (resumeTimer) clearTimeout(resumeTimer)
+        resumeTimer = setTimeout(() => {
+          isPaused = false
+          lastTimestamp = null // prevent position jump on resume
+        }, ms)
+      }
+
+      const animate = (timestamp: number) => {
+        if (!isPaused) {
+          if (lastTimestamp !== null) {
+            const elapsed = (timestamp - lastTimestamp) / 1000
+            const center = map.getCenter()
+            map.setCenter([center.lng + AUTO_SCROLL_SPEED * elapsed, center.lat])
+          }
+          lastTimestamp = timestamp
+        }
+        animFrameId = requestAnimationFrame(animate)
+      }
+
+      animFrameId = requestAnimationFrame(animate)
+
+      // Pause while user is dragging
+      map.on('mousedown', () => {
+        isPaused = true
+        lastTimestamp = null
+        if (resumeTimer) clearTimeout(resumeTimer)
+      })
+
+      // Resume 5s after releasing
+      map.on('mouseup', () => resumeAfter(5000))
+
+      // Also handle touch
+      map.on('touchstart', () => {
+        isPaused = true
+        lastTimestamp = null
+        if (resumeTimer) clearTimeout(resumeTimer)
+      })
+      map.on('touchend', () => resumeAfter(5000))
+
+      // --- Hover interaction ---
       map.on('mousemove', 'country-fills', (e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
         if (!e.features || e.features.length === 0) return
 
         const feature = e.features[0]
         const id = feature.id as number
 
-        // Clear previous hover
         if (hoveredIdRef.current !== null) {
           map.setFeatureState(
             { source: 'countries', id: Number(hoveredIdRef.current) },
@@ -101,13 +155,7 @@ export default function Map() {
         const name = feature.properties?.NAME || ''
         const iso = feature.properties?.ISO_A3 || ''
 
-        setTooltip({
-          visible: true,
-          x: e.point.x,
-          y: e.point.y,
-          name,
-          iso,
-        })
+        setTooltip({ visible: true, x: e.point.x, y: e.point.y, name, iso })
       })
 
       map.on('mouseleave', 'country-fills', () => {
@@ -122,25 +170,26 @@ export default function Map() {
         setTooltip({ visible: false, x: 0, y: 0, name: '', iso: '' })
       })
 
-      // Click interaction
+      // --- Click interactions ---
       map.on('click', 'country-fills', (e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
         if (!e.features || e.features.length === 0) return
         const iso = e.features[0].properties?.ISO_A3 || null
         setSelectedCountry(iso)
       })
 
-      // Click on empty space deselects
       map.on('click', (e: maplibregl.MapMouseEvent) => {
-        const features = map.queryRenderedFeatures(e.point, {
-          layers: ['country-fills'],
-        })
-        if (features.length === 0) {
-          setSelectedCountry(null)
-        }
+        const features = map.queryRenderedFeatures(e.point, { layers: ['country-fills'] })
+        if (features.length === 0) setSelectedCountry(null)
       })
+
+      // Cleanup animation on unmount
+      const cleanup = () => {
+        cancelAnimationFrame(animFrameId)
+        if (resumeTimer) clearTimeout(resumeTimer)
+      }
+      map.once('remove', cleanup)
     })
 
-    // Add zoom controls
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right')
 
     return () => {
