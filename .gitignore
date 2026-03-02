@@ -15,6 +15,9 @@ dist
 # Claude Code
 .claude/
 
+# Data fetch scripts (contain machine-specific symlinks, not needed in repo)
+scripts/
+
 # Project planning / context files
 CLAUDE.md
 PLAN.md
