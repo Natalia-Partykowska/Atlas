@@ -6,8 +6,10 @@ import { useAtlasStore } from '@/stores/useAtlasStore'
 import { useDataLayer } from '@/hooks/useDataLayer'
 import { NO_DATA_COLOR } from '@/lib/mapPaint'
 import {
-  computeCentroid,
-  translateGeometry,
+  toMercator,
+  fromMercator,
+  computeMercatorCentroid,
+  repositionGeometry,
   makeGhostFeatureCollection,
   EMPTY_FEATURE_COLLECTION,
 } from '@/lib/ghostGeometry'
@@ -265,10 +267,17 @@ export default function Map() {
         if (!compareModeRef.current || ghostStatusRef.current !== 'dragging') return
         if (!ghostGeometryRef.current || !ghostCentroidRef.current) return
 
-        const dLng = e.lngLat.lng - ghostCentroidRef.current[0]
-        const dLat = e.lngLat.lat - ghostCentroidRef.current[1]
+        const newCentroid = toMercator(e.lngLat.lng, e.lngLat.lat)
+        const latOrig = fromMercator(ghostCentroidRef.current[0], ghostCentroidRef.current[1])[1]
+        const scale =
+          Math.cos((latOrig * Math.PI) / 180) / Math.cos((e.lngLat.lat * Math.PI) / 180)
 
-        const translated = translateGeometry(ghostGeometryRef.current, dLng, dLat)
+        const translated = repositionGeometry(
+          ghostGeometryRef.current,
+          ghostCentroidRef.current,
+          newCentroid,
+          scale
+        )
         const ghostSource = map.getSource('ghost-country') as maplibregl.GeoJSONSource
         ghostSource.setData(makeGhostFeatureCollection(translated, ghostNameRef.current))
       })
@@ -296,7 +305,7 @@ export default function Map() {
         if (!geometry) return
 
         const name = (e.features[0].properties?.NAME as string) || iso
-        const centroid = computeCentroid(geometry)
+        const centroid = computeMercatorCentroid(geometry)
 
         ghostGeometryRef.current = geometry
         ghostCentroidRef.current = centroid
