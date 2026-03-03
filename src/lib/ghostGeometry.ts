@@ -1,20 +1,40 @@
 import type { Polygon, MultiPolygon, Position, FeatureCollection } from 'geojson'
 
 const MAX_LAT = 85.051129
+const MAX_Y = Math.log(Math.tan(Math.PI / 4 + (MAX_LAT * Math.PI) / 360))
 
-function wrapLng(lng: number): number {
-  return ((lng % 360) + 540) % 360 - 180
+export function toMercator(lng: number, lat: number): [number, number] {
+  const x = (lng * Math.PI) / 180
+  const y = Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360))
+  return [x, y]
 }
 
-function translateRing(ring: Position[], dLng: number, dLat: number): Position[] {
-  return ring.map(([lng, lat, ...rest]) => [
-    wrapLng(lng + dLng),
-    Math.max(-MAX_LAT, Math.min(MAX_LAT, lat + dLat)),
-    ...rest,
-  ])
+export function fromMercator(x: number, y: number): [number, number] {
+  const lng = (x * 180) / Math.PI
+  const lat = ((2 * Math.atan(Math.exp(y)) - Math.PI / 2) * 180) / Math.PI
+  return [lng, lat]
 }
 
-export function computeCentroid(geometry: Polygon | MultiPolygon): [number, number] {
+function wrapX(x: number): number {
+  return ((x % (2 * Math.PI)) + 3 * Math.PI) % (2 * Math.PI) - Math.PI
+}
+
+function repositionRing(
+  ring: Position[],
+  origCentroid: [number, number],
+  newCentroid: [number, number],
+  scale: number
+): Position[] {
+  return ring.map(([lng, lat, ...rest]) => {
+    const [x, y] = toMercator(lng, lat)
+    const nx = wrapX(newCentroid[0] + (x - origCentroid[0]) * scale)
+    const ny = Math.max(-MAX_Y, Math.min(MAX_Y, newCentroid[1] + (y - origCentroid[1]) * scale))
+    const [nLng, nLat] = fromMercator(nx, ny)
+    return [nLng, nLat, ...rest]
+  })
+}
+
+export function computeMercatorCentroid(geometry: Polygon | MultiPolygon): [number, number] {
   let ring: Position[]
 
   if (geometry.type === 'Polygon') {
@@ -27,26 +47,34 @@ export function computeCentroid(geometry: Polygon | MultiPolygon): [number, numb
     ring = largest[0]
   }
 
-  const lngSum = ring.reduce((s, c) => s + c[0], 0)
-  const latSum = ring.reduce((s, c) => s + c[1], 0)
-  return [lngSum / ring.length, latSum / ring.length]
+  let xSum = 0
+  let ySum = 0
+  for (const [lng, lat] of ring) {
+    const [x, y] = toMercator(lng, lat)
+    xSum += x
+    ySum += y
+  }
+  return [xSum / ring.length, ySum / ring.length]
 }
 
-export function translateGeometry(
+export function repositionGeometry(
   geometry: Polygon | MultiPolygon,
-  dLng: number,
-  dLat: number
+  origCentroid: [number, number],
+  newCentroid: [number, number],
+  scale: number
 ): Polygon | MultiPolygon {
   if (geometry.type === 'Polygon') {
     return {
       type: 'Polygon',
-      coordinates: geometry.coordinates.map((ring) => translateRing(ring, dLng, dLat)),
+      coordinates: geometry.coordinates.map((ring) =>
+        repositionRing(ring, origCentroid, newCentroid, scale)
+      ),
     }
   } else {
     return {
       type: 'MultiPolygon',
       coordinates: geometry.coordinates.map((part) =>
-        part.map((ring) => translateRing(ring, dLng, dLat))
+        part.map((ring) => repositionRing(ring, origCentroid, newCentroid, scale))
       ),
     }
   }
