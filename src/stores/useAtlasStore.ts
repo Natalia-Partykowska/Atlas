@@ -6,8 +6,10 @@ export const useAtlasStore = create<AtlasState>((set) => ({
   selectedCountry: null,
   activeLayerId: 'gdp',
   layerData: null,
+  compareMode: false,
   setTooltip: (tooltip: TooltipState) => set({ tooltip }),
   setSelectedCountry: (selectedCountry) => set({ selectedCountry }),
   setActiveLayerId: (activeLayerId: LayerId) => set({ activeLayerId }),
   setLayerData: (layerData: CountryDataMap | null) => set({ layerData }),
+  setCompareMode: (compareMode: boolean) => set({ compareMode }),
 }))

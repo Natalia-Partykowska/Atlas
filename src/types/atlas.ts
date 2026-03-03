@@ -27,8 +27,10 @@ export interface AtlasState {
   selectedCountry: string | null
   activeLayerId: LayerId
   layerData: CountryDataMap | null
+  compareMode: boolean
   setTooltip: (tooltip: TooltipState) => void
   setSelectedCountry: (country: string | null) => void
   setActiveLayerId: (id: LayerId) => void
   setLayerData: (data: CountryDataMap | null) => void
+  setCompareMode: (on: boolean) => void
 }

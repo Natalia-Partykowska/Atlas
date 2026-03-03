@@ -2,6 +2,7 @@ import Map from '@/components/map/Map'
 import Tooltip from '@/components/overlays/Tooltip'
 import LayerSwitcher from '@/components/overlays/LayerSwitcher'
 import Legend from '@/components/overlays/Legend'
+import CompareSizesButton from '@/components/overlays/CompareSizesButton'
 
 export default function App() {
   return (
@@ -10,6 +11,7 @@ export default function App() {
       <LayerSwitcher />
       <Legend />
       <Tooltip />
+      <CompareSizesButton />
     </div>
   )
 }
