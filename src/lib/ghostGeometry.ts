@@ -15,8 +15,20 @@ export function fromMercator(x: number, y: number): [number, number] {
   return [lng, lat]
 }
 
-function wrapX(x: number): number {
-  return ((x % (2 * Math.PI)) + 3 * Math.PI) % (2 * Math.PI) - Math.PI
+// Removes anti-meridian discontinuities — adjusts each vertex to be within
+// 180° of the previous one so offsets from centroid are always correct.
+function unwrapRing(ring: Position[]): Position[] {
+  if (ring.length === 0) return ring
+  const out: Position[] = [ring[0]]
+  for (let i = 1; i < ring.length; i++) {
+    const [lng, lat, ...rest] = ring[i]
+    let adjustedLng = lng
+    const prevLng = out[i - 1][0]
+    while (adjustedLng - prevLng > 180) adjustedLng -= 360
+    while (adjustedLng - prevLng < -180) adjustedLng += 360
+    out.push([adjustedLng, lat, ...rest])
+  }
+  return out
 }
 
 function repositionRing(
@@ -25,9 +37,11 @@ function repositionRing(
   newCentroid: [number, number],
   scale: number
 ): Position[] {
-  return ring.map(([lng, lat, ...rest]) => {
+  return unwrapRing(ring).map(([lng, lat, ...rest]) => {
     const [x, y] = toMercator(lng, lat)
-    const nx = wrapX(newCentroid[0] + (x - origCentroid[0]) * scale)
+    // No wrapX — let MapLibre handle world-wrapping at render time.
+    // Wrapping per-vertex breaks polygon continuity near the anti-meridian.
+    const nx = newCentroid[0] + (x - origCentroid[0]) * scale
     const ny = Math.max(-MAX_Y, Math.min(MAX_Y, newCentroid[1] + (y - origCentroid[1]) * scale))
     const [nLng, nLat] = fromMercator(nx, ny)
     return [nLng, nLat, ...rest]
@@ -47,14 +61,18 @@ export function computeMercatorCentroid(geometry: Polygon | MultiPolygon): [numb
     ring = largest[0]
   }
 
+  // Unwrap before averaging so anti-meridian-spanning countries (e.g. Russia)
+  // get a correct centroid rather than one pulled toward 0°E.
+  const unwrapped = unwrapRing(ring)
+
   let xSum = 0
   let ySum = 0
-  for (const [lng, lat] of ring) {
+  for (const [lng, lat] of unwrapped) {
     const [x, y] = toMercator(lng, lat)
     xSum += x
     ySum += y
   }
-  return [xSum / ring.length, ySum / ring.length]
+  return [xSum / unwrapped.length, ySum / unwrapped.length]
 }
 
 export function repositionGeometry(
