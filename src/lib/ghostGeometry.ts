@@ -38,9 +38,13 @@ function repositionRing(
   scale: number
 ): Position[] {
   return unwrapRing(ring).map(([lng, lat, ...rest]) => {
-    const [x, y] = toMercator(lng, lat)
-    // No wrapX — let MapLibre handle world-wrapping at render time.
-    // Wrapping per-vertex breaks polygon continuity near the anti-meridian.
+    let [x, y] = toMercator(lng, lat)
+    // Normalize x to within ±π of the centroid. This fixes MultiPolygon parts
+    // on the far side of the anti-meridian (e.g. Chukotka stored at -170°W
+    // while Russia's centroid is at ~+100°E — otherwise the offset is -270°
+    // instead of the correct +90°, placing Chukotka on the wrong side).
+    while (x - origCentroid[0] > Math.PI) x -= 2 * Math.PI
+    while (x - origCentroid[0] < -Math.PI) x += 2 * Math.PI
     const nx = newCentroid[0] + (x - origCentroid[0]) * scale
     const ny = Math.max(-MAX_Y, Math.min(MAX_Y, newCentroid[1] + (y - origCentroid[1]) * scale))
     const [nLng, nLat] = fromMercator(nx, ny)
