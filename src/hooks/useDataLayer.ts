@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react'
 import type * as maplibregl from 'maplibre-gl'
 import { useAtlasStore } from '@/stores/useAtlasStore'
 import { LAYER_MAP } from '@/data/layers.config'
-import { buildMatchExpression } from '@/lib/mapPaint'
+import { buildMatchExpression, NO_DATA_COLOR } from '@/lib/mapPaint'
 import type { CountryDataMap } from '@/types/atlas'
 
 export function useDataLayer(
@@ -11,6 +11,7 @@ export function useDataLayer(
 ) {
   const activeLayerId = useAtlasStore((s) => s.activeLayerId)
   const setLayerData = useAtlasStore((s) => s.setLayerData)
+  const compareMode = useAtlasStore((s) => s.compareMode)
   // Cache fetched data so switching back doesn't re-fetch
   const cacheRef = useRef<Record<string, CountryDataMap>>({})
 
@@ -20,6 +21,12 @@ export function useDataLayer(
 
     const layer = LAYER_MAP[activeLayerId]
     if (!layer) return
+
+    // In compare mode, strip data colors so shape comparison is unambiguous
+    if (compareMode) {
+      map.setPaintProperty('country-fills', 'fill-color', NO_DATA_COLOR)
+      return
+    }
 
     const paint = (data: CountryDataMap) => {
       setLayerData(data)
@@ -39,5 +46,5 @@ export function useDataLayer(
         paint(data)
       })
       .catch((err) => console.error(`Failed to load layer "${activeLayerId}":`, err))
-  }, [activeLayerId, isLoaded, mapRef, setLayerData])
+  }, [activeLayerId, isLoaded, mapRef, setLayerData, compareMode])
 }
