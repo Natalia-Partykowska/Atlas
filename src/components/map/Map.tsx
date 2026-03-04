@@ -154,6 +154,14 @@ export default function Map() {
         type: 'geojson',
         data: EMPTY_FEATURE_COLLECTION,
       })
+      map.addSource('antipode-line', {
+        type: 'geojson',
+        data: EMPTY_FEATURE_COLLECTION,
+      })
+      map.addSource('aurora-ovation', {
+        type: 'geojson',
+        data: EMPTY_FEATURE_COLLECTION,
+      })
       map.addSource('ghost-country', {
         type: 'geojson',
         data: EMPTY_FEATURE_COLLECTION,
@@ -184,7 +192,32 @@ export default function Map() {
         },
       })
 
-      // 3. Day/Night terminator shadow
+      // 3. Aurora heatmap (real NOAA Ovation data)
+      map.addLayer({
+        id: 'aurora-heatmap',
+        type: 'heatmap',
+        source: 'aurora-ovation',
+        paint: {
+          'heatmap-weight': ['interpolate', ['linear'], ['get', 'probability'], 0, 0, 100, 1],
+          'heatmap-intensity': 1.5,
+          'heatmap-color': [
+            'interpolate',
+            ['linear'],
+            ['heatmap-density'],
+            0, 'rgba(0,0,0,0)',
+            0.1, 'rgba(74,222,128,0.15)',
+            0.35, 'rgba(74,222,128,0.55)',
+            0.6, 'rgba(134,239,172,0.80)',
+            0.8, 'rgba(52,211,153,0.90)',
+            0.92, 'rgba(192,132,252,0.95)',
+            1, 'rgba(232,121,249,1)',
+          ],
+          'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 1, 18, 6, 50],
+          'heatmap-opacity': 0.85,
+        },
+      })
+
+      // 4. Day/Night terminator shadow
       map.addLayer({
         id: 'terminator-fill',
         type: 'fill',
@@ -308,6 +341,19 @@ export default function Map() {
           'circle-stroke-width': 2,
           'circle-stroke-color': '#FFFFFF',
           'circle-stroke-opacity': 0.85,
+        },
+      })
+
+      // 13. Antipode connecting line (dashed, behind ghost)
+      map.addLayer({
+        id: 'antipode-connection',
+        type: 'line',
+        source: 'antipode-line',
+        paint: {
+          'line-color': '#94A3B8',
+          'line-width': 1.5,
+          'line-dasharray': [3, 3],
+          'line-opacity': 0.5,
         },
       })
 
@@ -587,6 +633,16 @@ export default function Map() {
             ],
           })
 
+          const lineSrc = map.getSource('antipode-line') as maplibregl.GeoJSONSource
+          lineSrc.setData({
+            type: 'FeatureCollection',
+            features: [{
+              type: 'Feature',
+              properties: {},
+              geometry: { type: 'LineString', coordinates: [[lng, lat], [aLng, aLat]] },
+            }],
+          })
+
           setAntipodeInfo({ origin: [lng, lat], antipodePt, label })
           return
         }
@@ -785,6 +841,7 @@ export default function Map() {
           EMPTY_FEATURE_COLLECTION,
         )
       clearSrc('antipode-points')
+      clearSrc('antipode-line')
     }
   }, [antipodeMode, isMapLoaded])
 
@@ -813,15 +870,28 @@ export default function Map() {
     auroraKpRef.current = aurora.kp
   }, [aurora.kp])
 
-  // ─── Aurora overlay (animated wavy bands) ────────────────────────────────
+  // ─── Aurora overlay A: real NOAA Ovation heatmap ─────────────────────────
   useEffect(() => {
     const map = mapRef.current
     if (!map || !isMapLoaded) return
+    const src = map.getSource('aurora-ovation') as maplibregl.GeoJSONSource | undefined
+    if (!src) return
+    if (auroraVisible && aurora.ovationGeoJSON) {
+      src.setData(aurora.ovationGeoJSON)
+    } else {
+      src.setData(EMPTY_FEATURE_COLLECTION)
+    }
+  }, [auroraVisible, aurora.ovationGeoJSON, isMapLoaded])
 
+  // ─── Aurora overlay B: wavy bands fallback (when no real data) ───────────
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !isMapLoaded) return
     const src = map.getSource('aurora-bands') as maplibregl.GeoJSONSource | undefined
     if (!src) return
 
-    if (!auroraVisible) {
+    const useFallback = auroraVisible && !aurora.ovationGeoJSON
+    if (!useFallback) {
       src.setData(EMPTY_FEATURE_COLLECTION)
       return
     }
@@ -840,7 +910,7 @@ export default function Map() {
     }
     animId = requestAnimationFrame(animate)
     return () => cancelAnimationFrame(animId)
-  }, [auroraVisible, isMapLoaded])
+  }, [auroraVisible, aurora.ovationGeoJSON, isMapLoaded])
 
   return (
     <div className="relative w-full h-full">

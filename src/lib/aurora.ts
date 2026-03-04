@@ -1,4 +1,4 @@
-import type { Feature, FeatureCollection, Polygon } from 'geojson'
+import type { Feature, FeatureCollection, Point, Polygon } from 'geojson'
 
 const DEG = Math.PI / 180
 
@@ -88,6 +88,30 @@ function makeWavyBand(
     geometry: { type: 'Polygon', coordinates: [ring] },
   }
 }
+
+// ── NOAA Ovation real-data types ─────────────────────────────────────────────
+
+export interface OvationData {
+  'Forecast Time': string
+  coordinates: [number, number, number][] // [lng 0-359, lat, probability 0-100]
+}
+
+/** Convert NOAA Ovation aurora probability grid to a GeoJSON FeatureCollection. */
+export function convertOvationToGeoJSON(data: OvationData): FeatureCollection<Point> {
+  const features = data.coordinates
+    .filter(([, , prob]) => prob > 2)
+    .map(([lng, lat, prob]) => ({
+      type: 'Feature' as const,
+      properties: { probability: prob },
+      geometry: {
+        type: 'Point' as const,
+        coordinates: [lng > 180 ? lng - 360 : lng, lat],
+      },
+    }))
+  return { type: 'FeatureCollection', features }
+}
+
+// ── Wavy-band fallback ────────────────────────────────────────────────────────
 
 /**
  * Generate wavy aurora band FeatureCollection for both hemispheres.

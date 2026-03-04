@@ -1,8 +1,12 @@
 import { useEffect, useState } from 'react'
-import { kpLabel, kpColor } from '@/lib/aurora'
+import type { FeatureCollection, Point } from 'geojson'
+import { kpLabel, kpColor, convertOvationToGeoJSON } from '@/lib/aurora'
+import type { OvationData } from '@/lib/aurora'
 
 const NOAA_KP_URL =
   'https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json'
+const NOAA_OVATION_URL =
+  'https://services.swpc.noaa.gov/json/ovation_aurora_latest.json'
 const POLL_INTERVAL_MS = 15 * 60 * 1000 // 15 minutes
 const DEFAULT_KP = 2
 
@@ -11,14 +15,19 @@ interface AuroraState {
   label: string
   color: string
   dataUnavailable: boolean
+  ovationGeoJSON: FeatureCollection<Point> | null
 }
 
 export function useAurora(enabled: boolean): AuroraState {
   const [kp, setKp] = useState(DEFAULT_KP)
   const [dataUnavailable, setDataUnavailable] = useState(false)
+  const [ovationGeoJSON, setOvationGeoJSON] = useState<FeatureCollection<Point> | null>(null)
 
   useEffect(() => {
-    if (!enabled) return
+    if (!enabled) {
+      setOvationGeoJSON(null)
+      return
+    }
 
     const fetchKp = async () => {
       try {
@@ -39,8 +48,23 @@ export function useAurora(enabled: boolean): AuroraState {
       }
     }
 
+    const fetchOvation = async () => {
+      try {
+        const res = await fetch(NOAA_OVATION_URL)
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const data: OvationData = await res.json()
+        setOvationGeoJSON(convertOvationToGeoJSON(data))
+      } catch {
+        setOvationGeoJSON(null)
+      }
+    }
+
     fetchKp()
-    const interval = setInterval(fetchKp, POLL_INTERVAL_MS)
+    fetchOvation()
+    const interval = setInterval(() => {
+      fetchKp()
+      fetchOvation()
+    }, POLL_INTERVAL_MS)
     return () => clearInterval(interval)
   }, [enabled])
 
@@ -49,5 +73,6 @@ export function useAurora(enabled: boolean): AuroraState {
     label: kpLabel(kp),
     color: kpColor(kp),
     dataUnavailable,
+    ovationGeoJSON,
   }
 }
