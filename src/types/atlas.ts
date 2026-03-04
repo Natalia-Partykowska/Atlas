@@ -28,9 +28,21 @@ export interface AtlasState {
   activeLayerId: LayerId
   layerData: CountryDataMap | null
   compareMode: boolean
+  measureMode: boolean
+  antipodeMode: boolean
+  terminatorVisible: boolean
+  auroraVisible: boolean
+  auroraKp: number
+  auroraLabel: string
+  auroraDataUnavailable: boolean
   setTooltip: (tooltip: TooltipState) => void
   setSelectedCountry: (country: string | null) => void
   setActiveLayerId: (id: LayerId) => void
   setLayerData: (data: CountryDataMap | null) => void
   setCompareMode: (on: boolean) => void
+  setMeasureMode: (on: boolean) => void
+  setAntipodeMode: (on: boolean) => void
+  setTerminatorVisible: (on: boolean) => void
+  setAuroraVisible: (on: boolean) => void
+  setAuroraInfo: (kp: number, label: string, dataUnavailable: boolean) => void
 }
