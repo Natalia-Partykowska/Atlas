@@ -7,9 +7,27 @@ export const useAtlasStore = create<AtlasState>((set) => ({
   activeLayerId: 'gdp',
   layerData: null,
   compareMode: false,
+  measureMode: false,
+  antipodeMode: false,
+  terminatorVisible: false,
+  auroraVisible: false,
+  auroraKp: 2,
+  auroraLabel: 'Quiet',
+  auroraDataUnavailable: false,
   setTooltip: (tooltip: TooltipState) => set({ tooltip }),
   setSelectedCountry: (selectedCountry) => set({ selectedCountry }),
   setActiveLayerId: (activeLayerId: LayerId) => set({ activeLayerId }),
   setLayerData: (layerData: CountryDataMap | null) => set({ layerData }),
-  setCompareMode: (compareMode: boolean) => set({ compareMode }),
+  // Mutually exclusive interactive modes
+  setCompareMode: (on: boolean) =>
+    set(on ? { compareMode: true, measureMode: false, antipodeMode: false } : { compareMode: false }),
+  setMeasureMode: (on: boolean) =>
+    set(on ? { measureMode: true, compareMode: false, antipodeMode: false } : { measureMode: false }),
+  setAntipodeMode: (on: boolean) =>
+    set(on ? { antipodeMode: true, compareMode: false, measureMode: false } : { antipodeMode: false }),
+  // Independent overlay toggles
+  setTerminatorVisible: (terminatorVisible: boolean) => set({ terminatorVisible }),
+  setAuroraVisible: (auroraVisible: boolean) => set({ auroraVisible }),
+  setAuroraInfo: (auroraKp, auroraLabel, auroraDataUnavailable) =>
+    set({ auroraKp, auroraLabel, auroraDataUnavailable }),
 }))
