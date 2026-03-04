@@ -35,6 +35,8 @@ export default function Map() {
   const ghostCentroidRef = useRef<[number, number] | null>(null)
   const ghostNameRef = useRef<string>('')
   const countryGeoLookupRef = useRef<Record<string, Polygon | MultiPolygon>>({})
+  const pauseAndResumeAfterRef = useRef<((ms: number) => void) | null>(null)
+  const wasInCompareModeRef = useRef(false)
 
   const setTooltip = useAtlasStore((s) => s.setTooltip)
   const setSelectedCountry = useAtlasStore((s) => s.setSelectedCountry)
@@ -185,6 +187,13 @@ export default function Map() {
           isPaused = false
           lastTimestamp = null
         }, ms)
+      }
+
+      // Expose to the compareMode useEffect so exiting compare mode can
+      // re-pause and schedule the standard 5-second resume.
+      pauseAndResumeAfterRef.current = (ms: number) => {
+        isPaused = true
+        resumeAfter(ms)
       }
 
       const animate = (timestamp: number) => {
@@ -366,11 +375,19 @@ export default function Map() {
     compareModeRef.current = compareMode
 
     if (compareMode) {
+      wasInCompareModeRef.current = true
       map.dragPan.disable()
       map.getCanvas().style.cursor = 'crosshair'
     } else {
       map.dragPan.enable()
       map.getCanvas().style.cursor = ''
+
+      // Only reschedule auto-scroll when actually exiting compare mode,
+      // not on the initial render where compareMode is already false.
+      if (wasInCompareModeRef.current) {
+        wasInCompareModeRef.current = false
+        pauseAndResumeAfterRef.current?.(5000)
+      }
 
       // Clear ghost
       ghostStatusRef.current = 'none'
