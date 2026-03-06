@@ -1,4 +1,4 @@
-import type { LayerConfig } from '@/types/atlas'
+import type { LayerConfig, DataLayerConfig } from '@/types/atlas'
 
 export const LAYERS: LayerConfig[] = [
   {
@@ -58,4 +58,6 @@ export const LAYERS: LayerConfig[] = [
   },
 ]
 
-export const LAYER_MAP = Object.fromEntries(LAYERS.map((l) => [l.id, l])) as Record<string, LayerConfig>
+export const LAYER_MAP: Record<string, DataLayerConfig> = Object.fromEntries(
+  LAYERS.filter((l): l is DataLayerConfig => l.id !== 'base').map((l) => [l.id, l]),
+)

@@ -6,7 +6,7 @@ export default function Legend() {
   const layerData = useAtlasStore((s) => s.layerData)
 
   const layer = LAYER_MAP[activeLayerId]
-  if (!layer || layer.id === 'base' || !layerData) return null
+  if (!layer || !layerData) return null
 
   const values = Object.values(layerData).filter((v) => isFinite(v) && v >= 0)
   if (values.length === 0) return null
