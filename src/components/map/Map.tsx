@@ -482,6 +482,9 @@ export default function Map() {
             map.getCanvas().style.cursor = 'pointer'
           }
 
+          // While dragging a ghost, suppress underlying country tooltips
+          if (ghostStatusRef.current === 'dragging') return
+
           const name = feature.properties?.NAME || ''
           const iso =
             feature.properties?.ISO_A3_EH || feature.properties?.ISO_A3 || ''
@@ -500,7 +503,10 @@ export default function Map() {
         if (!compareModeRef.current && !measureModeRef.current && !antipodeModeRef.current) {
           map.getCanvas().style.cursor = ''
         }
-        setTooltip({ visible: false, x: 0, y: 0, name: '', iso: '' })
+        // Keep ghost name visible while dragging
+        if (ghostStatusRef.current !== 'dragging') {
+          setTooltip({ visible: false, x: 0, y: 0, name: '', iso: '' })
+        }
       })
 
       // ── Ghost drag (compare mode) ─────────────────────────────────────────
@@ -525,6 +531,9 @@ export default function Map() {
         )
         const ghostSource = map.getSource('ghost-country') as maplibregl.GeoJSONSource
         ghostSource.setData(makeGhostFeatureCollection(translated, ghostNameRef.current))
+
+        // Show only the ghost country's name while dragging
+        setTooltip({ visible: true, x: e.point.x, y: e.point.y, name: ghostNameRef.current, iso: '' })
       })
 
       // ── Click on country fill ─────────────────────────────────────────────
@@ -551,6 +560,7 @@ export default function Map() {
           if (ghostStatusRef.current === 'dragging') {
             ghostStatusRef.current = 'dropped'
             map.getCanvas().style.cursor = 'crosshair'
+            setTooltip({ visible: false, x: 0, y: 0, name: '', iso: '' })
             return
           }
 
@@ -663,6 +673,7 @@ export default function Map() {
         if (features.length === 0 && ghostStatusRef.current === 'dragging') {
           ghostStatusRef.current = 'dropped'
           map.getCanvas().style.cursor = 'crosshair'
+          setTooltip({ visible: false, x: 0, y: 0, name: '', iso: '' })
         }
       })
 
