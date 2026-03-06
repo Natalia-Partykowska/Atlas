@@ -23,7 +23,7 @@ import {
 } from '@/lib/greatCircle'
 import { generateAuroraWavyBands } from '@/lib/aurora'
 import { computeAntipode, identifyOcean } from '@/lib/antipode'
-import { computeTerminator } from '@/lib/solarTerminator'
+import { computeTerminator, computeTerminatorCurve } from '@/lib/solarTerminator'
 import DistanceLabel from '@/components/overlays/DistanceLabel'
 import AntipodeLabel from '@/components/overlays/AntipodeLabel'
 import type { AntipodeInfo } from '@/components/overlays/AntipodeLabel'
@@ -77,7 +77,9 @@ export default function Map() {
   const antipodeMode = useAtlasStore((s) => s.antipodeMode)
   const setAntipodeMode = useAtlasStore((s) => s.setAntipodeMode)
   const terminatorVisible = useAtlasStore((s) => s.terminatorVisible)
+  const setTerminatorVisible = useAtlasStore((s) => s.setTerminatorVisible)
   const auroraVisible = useAtlasStore((s) => s.auroraVisible)
+  const setAuroraVisible = useAtlasStore((s) => s.setAuroraVisible)
   const setAuroraInfo = useAtlasStore((s) => s.setAuroraInfo)
 
   const aurora = useAurora(auroraVisible)
@@ -135,6 +137,10 @@ export default function Map() {
         data: EMPTY_FEATURE_COLLECTION,
       })
       map.addSource('terminator-shadow', {
+        type: 'geojson',
+        data: EMPTY_FEATURE_COLLECTION,
+      })
+      map.addSource('terminator-curve', {
         type: 'geojson',
         data: EMPTY_FEATURE_COLLECTION,
       })
@@ -243,7 +249,7 @@ export default function Map() {
       map.addLayer({
         id: 'terminator-border',
         type: 'line',
-        source: 'terminator-shadow',
+        source: 'terminator-curve',
         paint: {
           'line-color': 'rgba(100, 160, 255, 0.25)',
           'line-width': 1.5,
@@ -663,9 +669,11 @@ export default function Map() {
       // ── Keyboard ──────────────────────────────────────────────────────────
       const handleKeyDown = (ev: KeyboardEvent) => {
         if (ev.key !== 'Escape') return
-        if (compareModeRef.current) setCompareMode(false)
-        else if (measureModeRef.current) setMeasureMode(false)
-        else if (antipodeModeRef.current) setAntipodeMode(false)
+        setCompareMode(false)
+        setMeasureMode(false)
+        setAntipodeMode(false)
+        setTerminatorVisible(false)
+        setAuroraVisible(false)
       }
       window.addEventListener('keydown', handleKeyDown)
 
@@ -734,11 +742,6 @@ export default function Map() {
       }
     }) // end map.on('load')
 
-    map.addControl(
-      new maplibregl.NavigationControl({ showCompass: false }),
-      'bottom-right',
-    )
-
     return () => {
       map.remove()
       mapRef.current = null
@@ -750,6 +753,8 @@ export default function Map() {
     setCompareMode,
     setMeasureMode,
     setAntipodeMode,
+    setTerminatorVisible,
+    setAuroraVisible,
     setMeasureInfo,
     setAntipodeInfo,
   ])
@@ -851,14 +856,20 @@ export default function Map() {
     if (!map || !isMapLoaded) return
 
     const src = map.getSource('terminator-shadow') as maplibregl.GeoJSONSource | undefined
-    if (!src) return
+    const curveSrc = map.getSource('terminator-curve') as maplibregl.GeoJSONSource | undefined
+    if (!src || !curveSrc) return
 
     if (!terminatorVisible) {
       src.setData(EMPTY_FEATURE_COLLECTION)
+      curveSrc.setData(EMPTY_FEATURE_COLLECTION)
       return
     }
 
-    const update = () => src.setData(computeTerminator(new Date()))
+    const update = () => {
+      const now = new Date()
+      src.setData(computeTerminator(now))
+      curveSrc.setData(computeTerminatorCurve(now))
+    }
     update()
     const interval = setInterval(update, 60_000)
     return () => clearInterval(interval)
@@ -917,6 +928,24 @@ export default function Map() {
       <div ref={containerRef} className="w-full h-full" />
       <DistanceLabel info={measureInfo} mapRef={mapRef} />
       <AntipodeLabel info={antipodeInfo} mapRef={mapRef} />
+      <div className="absolute bottom-8 right-3 z-10 flex flex-col gap-1">
+        <button
+          onClick={() => {
+            const m = mapRef.current
+            if (m) m.easeTo({ zoom: Math.min(m.getMaxZoom(), m.getZoom() + 1.2), duration: 300 })
+          }}
+          className="w-8 h-8 bg-black/50 border border-white/15 text-white/80 rounded text-lg leading-none hover:bg-white/10 transition-colors"
+          aria-label="Zoom in"
+        >+</button>
+        <button
+          onClick={() => {
+            const m = mapRef.current
+            if (m) m.easeTo({ zoom: Math.max(m.getMinZoom(), m.getZoom() - 1.2), duration: 300 })
+          }}
+          className="w-8 h-8 bg-black/50 border border-white/15 text-white/80 rounded text-lg leading-none hover:bg-white/10 transition-colors"
+          aria-label="Zoom out"
+        >–</button>
+      </div>
     </div>
   )
 }

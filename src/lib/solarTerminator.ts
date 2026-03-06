@@ -1,4 +1,4 @@
-import type { Feature, Polygon } from 'geojson'
+import type { Feature, LineString, Polygon } from 'geojson'
 
 const DEG = Math.PI / 180
 const RAD = 180 / Math.PI
@@ -76,6 +76,41 @@ export function computeTerminator(date: Date, numPoints = 360): Feature<Polygon>
     geometry: {
       type: 'Polygon',
       coordinates: [coords],
+    },
+  }
+}
+
+/**
+ * Generate only the day/night boundary as a GeoJSON LineString.
+ * Unlike computeTerminator (which closes through the night pole),
+ * this returns just the terminator curve — no vertical closing edges at ±180°.
+ */
+export function computeTerminatorCurve(date: Date, numPoints = 360): Feature<LineString> {
+  const [lng0, lat0] = subsolarPoint(date)
+  const phiS = lat0 * DEG
+  const lamS = lng0 * DEG
+
+  const terminatorPts: [number, number][] = []
+
+  for (let i = 0; i <= numPoints; i++) {
+    const lam = -Math.PI + (2 * Math.PI * i) / numPoints
+    let phi: number
+
+    if (Math.abs(Math.sin(phiS)) < 1e-6) {
+      phi = Math.cos(lam - lamS) >= 0 ? -Math.PI / 2 : Math.PI / 2
+    } else {
+      phi = Math.atan((-Math.cos(lam - lamS) * Math.cos(phiS)) / Math.sin(phiS))
+    }
+
+    terminatorPts.push([lam * RAD, phi * RAD])
+  }
+
+  return {
+    type: 'Feature',
+    properties: {},
+    geometry: {
+      type: 'LineString',
+      coordinates: terminatorPts,
     },
   }
 }
