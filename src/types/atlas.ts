@@ -1,10 +1,16 @@
 export type ISO3 = string
 export type CountryDataMap = Record<ISO3, number>
 
-export type LayerId = 'gdp' | 'hdi' | 'happiness' | 'mobile-desktop' | 'ai-adoption'
+export type LayerId = 'base' | 'gdp' | 'hdi' | 'happiness' | 'mobile-desktop' | 'ai-adoption'
 
-export interface LayerConfig {
-  id: LayerId
+export interface BaseLayerConfig {
+  id: 'base'
+  label: string
+  description: string
+}
+
+export interface DataLayerConfig {
+  id: Exclude<LayerId, 'base'>
   label: string
   description: string
   unit: string
@@ -13,6 +19,8 @@ export interface LayerConfig {
   colorHigh: string
   format: (v: number) => string
 }
+
+export type LayerConfig = BaseLayerConfig | DataLayerConfig
 
 export interface TooltipState {
   visible: boolean

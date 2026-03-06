@@ -2,6 +2,11 @@ import type { LayerConfig } from '@/types/atlas'
 
 export const LAYERS: LayerConfig[] = [
   {
+    id: 'base',
+    label: 'Base Map',
+    description: 'Plain map — no data overlay',
+  },
+  {
     id: 'gdp',
     label: 'GDP per Capita',
     description: 'Gross domestic product per person, PPP (current intl. $)',

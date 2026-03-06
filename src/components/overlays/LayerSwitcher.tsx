@@ -4,6 +4,11 @@ import { useAtlasStore } from '@/stores/useAtlasStore'
 export default function LayerSwitcher() {
   const activeLayerId = useAtlasStore((s) => s.activeLayerId)
   const setActiveLayerId = useAtlasStore((s) => s.setActiveLayerId)
+  const setCompareMode = useAtlasStore((s) => s.setCompareMode)
+  const setMeasureMode = useAtlasStore((s) => s.setMeasureMode)
+  const setAntipodeMode = useAtlasStore((s) => s.setAntipodeMode)
+  const setTerminatorVisible = useAtlasStore((s) => s.setTerminatorVisible)
+  const setAuroraVisible = useAtlasStore((s) => s.setAuroraVisible)
 
   return (
     <div className="fixed left-4 top-1/2 -translate-y-1/2 z-40 flex flex-col gap-1.5">
@@ -12,7 +17,16 @@ export default function LayerSwitcher() {
         return (
           <button
             key={layer.id}
-            onClick={() => setActiveLayerId(layer.id)}
+            onClick={() => {
+              setCompareMode(false)
+              setMeasureMode(false)
+              setAntipodeMode(false)
+              if (layer.id !== 'base') {
+                setTerminatorVisible(false)
+                setAuroraVisible(false)
+              }
+              setActiveLayerId(layer.id)
+            }}
             title={layer.description}
             className={[
               'text-left px-3 py-2 rounded-lg text-xs font-medium transition-all duration-200',

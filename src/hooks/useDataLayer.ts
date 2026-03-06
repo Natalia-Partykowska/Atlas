@@ -11,11 +11,6 @@ export function useDataLayer(
 ) {
   const activeLayerId = useAtlasStore((s) => s.activeLayerId)
   const setLayerData = useAtlasStore((s) => s.setLayerData)
-  const compareMode = useAtlasStore((s) => s.compareMode)
-  const measureMode = useAtlasStore((s) => s.measureMode)
-  const antipodeMode = useAtlasStore((s) => s.antipodeMode)
-  const terminatorVisible = useAtlasStore((s) => s.terminatorVisible)
-  const auroraVisible = useAtlasStore((s) => s.auroraVisible)
   // Cache fetched data so switching back doesn't re-fetch
   const cacheRef = useRef<Record<string, CountryDataMap>>({})
 
@@ -23,14 +18,15 @@ export function useDataLayer(
     const map = mapRef.current
     if (!map || !isLoaded) return
 
-    const layer = LAYER_MAP[activeLayerId]
-    if (!layer) return
-
-    // Strip data colors in any overlay/interactive mode for visual clarity
-    if (compareMode || measureMode || antipodeMode || terminatorVisible || auroraVisible) {
+    // Base layer — plain map, no data colors
+    if (activeLayerId === 'base') {
       map.setPaintProperty('country-fills', 'fill-color', NO_DATA_COLOR)
+      setLayerData(null)
       return
     }
+
+    const layer = LAYER_MAP[activeLayerId]
+    if (!layer) return
 
     const paint = (data: CountryDataMap) => {
       setLayerData(data)
@@ -50,5 +46,5 @@ export function useDataLayer(
         paint(data)
       })
       .catch((err) => console.error(`Failed to load layer "${activeLayerId}":`, err))
-  }, [activeLayerId, isLoaded, mapRef, setLayerData, compareMode, measureMode, antipodeMode, terminatorVisible, auroraVisible])
+  }, [activeLayerId, isLoaded, mapRef, setLayerData])
 }
