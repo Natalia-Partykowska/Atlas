@@ -16,16 +16,21 @@ interface AuroraState {
   color: string
   dataUnavailable: boolean
   ovationGeoJSON: FeatureCollection<Point> | null
+  // true only after a completed fetch that returned no usable data — never true
+  // while a fetch is in-flight, so wavy bands never flash before real data loads
+  ovationFailed: boolean
 }
 
 export function useAurora(enabled: boolean): AuroraState {
   const [kp, setKp] = useState(DEFAULT_KP)
   const [dataUnavailable, setDataUnavailable] = useState(false)
   const [ovationGeoJSON, setOvationGeoJSON] = useState<FeatureCollection<Point> | null>(null)
+  const [ovationFailed, setOvationFailed] = useState(false)
 
   useEffect(() => {
     if (!enabled) {
       setOvationGeoJSON(null)
+      setOvationFailed(false)
       return
     }
 
@@ -54,8 +59,10 @@ export function useAurora(enabled: boolean): AuroraState {
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         const data: OvationData = await res.json()
         setOvationGeoJSON(convertOvationToGeoJSON(data))
+        setOvationFailed(false)
       } catch {
         setOvationGeoJSON(null)
+        setOvationFailed(true)
       }
     }
 
@@ -74,5 +81,6 @@ export function useAurora(enabled: boolean): AuroraState {
     color: kpColor(kp),
     dataUnavailable,
     ovationGeoJSON,
+    ovationFailed,
   }
 }

@@ -50,19 +50,19 @@ export default function Toolbar() {
       {/* Interactive tools — mutually exclusive */}
       <div className="flex flex-col gap-1.5 w-36">
         <ToolBtn
-          label="📏 Measure"
+          label="Measure"
           active={measureMode}
           onClick={() => setMeasureMode(!measureMode)}
           title="Measure true great-circle distance vs Mercator straight line"
         />
         <ToolBtn
-          label="🔄 Compare Sizes"
+          label="Compare Sizes"
           active={compareMode}
           onClick={() => setCompareMode(!compareMode)}
           title="Drag country outlines to compare sizes (Mercator distortion)"
         />
         <ToolBtn
-          label="🌐 Antipodes"
+          label="Antipodes"
           active={antipodeMode}
           onClick={() => setAntipodeMode(!antipodeMode)}
           title="Click anywhere to see its exact opposite point on Earth"
@@ -75,14 +75,14 @@ export default function Toolbar() {
       {/* Ambient overlays — stackable */}
       <div className="flex flex-col gap-1.5 w-36">
         <ToolBtn
-          label={terminatorVisible ? '☾ Day/Night' : '☀ Day/Night'}
+          label="Day/Night"
           active={terminatorVisible}
           onClick={() => setTerminatorVisible(!terminatorVisible)}
           title="Show real-time solar day/night terminator"
         />
         <div className="relative">
           <ToolBtn
-            label="✨ Aurora"
+            label="Aurora"
             active={auroraVisible}
             onClick={() => setAuroraVisible(!auroraVisible)}
             title="Show aurora borealis/australis based on real-time NOAA Kp index"
