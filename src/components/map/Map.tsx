@@ -35,6 +35,8 @@ const COLORS = {
 
 const AUTO_SCROLL_SPEED = 4
 
+const computeMinZoom = (width: number) => Math.log2(width / 512) + 0.05
+
 interface MeasureInfo {
   distanceKm: number
   rhumbKm: number
@@ -68,6 +70,9 @@ export default function Map() {
   const wasInAntipodeModeRef = useRef(false)
   const [antipodeInfo, setAntipodeInfo] = useState<AntipodeInfo | null>(null)
 
+  // Globe mode refs
+  const globeModeRef = useRef<boolean>(false)
+
   const setTooltip = useAtlasStore((s) => s.setTooltip)
   const setSelectedCountry = useAtlasStore((s) => s.setSelectedCountry)
   const compareMode = useAtlasStore((s) => s.compareMode)
@@ -76,6 +81,7 @@ export default function Map() {
   const setMeasureMode = useAtlasStore((s) => s.setMeasureMode)
   const antipodeMode = useAtlasStore((s) => s.antipodeMode)
   const setAntipodeMode = useAtlasStore((s) => s.setAntipodeMode)
+  const globeMode = useAtlasStore((s) => s.globeMode)
   const terminatorVisible = useAtlasStore((s) => s.terminatorVisible)
   const setTerminatorVisible = useAtlasStore((s) => s.setTerminatorVisible)
   const auroraVisible = useAtlasStore((s) => s.auroraVisible)
@@ -94,10 +100,6 @@ export default function Map() {
   // ─── Map initialization ──────────────────────────────────────────────────
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return
-
-    // Minimum zoom so exactly one world copy fills the viewport (no duplicates).
-    // worldWidth = 512 × 2^zoom; solve for zoom where worldWidth ≥ containerWidth.
-    const computeMinZoom = (width: number) => Math.log2(width / 512) + 0.05
 
     const map = new maplibregl.Map({
       container: containerRef.current,
@@ -403,8 +405,11 @@ export default function Map() {
       })
 
       // Update minZoom when the container is resized (e.g. browser window resize).
+      // Skip in globe mode — globe has its own minZoom and the mercator formula doesn't apply.
       map.on('resize', () => {
-        map.setMinZoom(computeMinZoom(map.getContainer().offsetWidth))
+        if (!globeModeRef.current) {
+          map.setMinZoom(computeMinZoom(map.getContainer().offsetWidth))
+        }
       })
 
       setIsMapLoaded(true)
@@ -450,7 +455,7 @@ export default function Map() {
       }
 
       const isAnyInteractiveMode = () =>
-        compareModeRef.current || measureModeRef.current || antipodeModeRef.current
+        compareModeRef.current || measureModeRef.current || antipodeModeRef.current || globeModeRef.current
 
       const animate = (timestamp: number) => {
         if (!isPaused && !isAnyInteractiveMode()) {
@@ -883,6 +888,26 @@ export default function Map() {
       clearSrc('antipode-line')
     }
   }, [antipodeMode, isMapLoaded])
+
+  // ─── Sync globeMode ──────────────────────────────────────────────────────
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !isMapLoaded) return
+
+    globeModeRef.current = globeMode
+
+    if (globeMode) {
+      map.setProjection({ type: 'globe' })
+      map.setMinZoom(0.5)
+    } else {
+      map.setProjection({ type: 'mercator' })
+      const restoredMin = computeMinZoom(map.getContainer().offsetWidth)
+      map.setMinZoom(restoredMin)
+      if (map.getZoom() < restoredMin) {
+        map.easeTo({ zoom: restoredMin, duration: 200 })
+      }
+    }
+  }, [globeMode, isMapLoaded])
 
   // ─── Terminator overlay ──────────────────────────────────────────────────
   useEffect(() => {

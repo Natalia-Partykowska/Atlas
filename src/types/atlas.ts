@@ -38,6 +38,7 @@ export interface AtlasState {
   compareMode: boolean
   measureMode: boolean
   antipodeMode: boolean
+  globeMode: boolean
   terminatorVisible: boolean
   auroraVisible: boolean
   auroraKp: number
@@ -50,6 +51,7 @@ export interface AtlasState {
   setCompareMode: (on: boolean) => void
   setMeasureMode: (on: boolean) => void
   setAntipodeMode: (on: boolean) => void
+  setGlobeMode: (on: boolean) => void
   setTerminatorVisible: (on: boolean) => void
   setAuroraVisible: (on: boolean) => void
   setAuroraInfo: (kp: number, label: string, dataUnavailable: boolean) => void
