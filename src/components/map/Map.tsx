@@ -19,7 +19,6 @@ import {
   haversineDistance,
   rhumbDistance,
   unwrapPath,
-  splitAtAntiMeridian,
 } from '@/lib/greatCircle'
 import { generateAuroraWavyBands } from '@/lib/aurora'
 import { computeAntipode, identifyOcean } from '@/lib/antipode'
@@ -716,16 +715,15 @@ export default function Map() {
 
       function drawMeasurement(p1: [number, number], p2: [number, number]) {
         const arcPts = interpolateGreatCircle(p1, p2, 100)
-        const segments = splitAtAntiMeridian(unwrapPath(arcPts))
 
         const arcSrc = map.getSource('measure-great-circle') as maplibregl.GeoJSONSource
         arcSrc.setData({
           type: 'FeatureCollection',
-          features: segments.map((seg) => ({
+          features: [{
             type: 'Feature',
             properties: {},
-            geometry: { type: 'LineString', coordinates: seg },
-          })),
+            geometry: { type: 'LineString', coordinates: unwrapPath(arcPts) },
+          }],
         })
 
         const straightSrc = map.getSource(
@@ -733,13 +731,11 @@ export default function Map() {
         ) as maplibregl.GeoJSONSource
         straightSrc.setData({
           type: 'FeatureCollection',
-          features: [
-            {
-              type: 'Feature',
-              properties: {},
-              geometry: { type: 'LineString', coordinates: [p1, p2] },
-            },
-          ],
+          features: [{
+            type: 'Feature',
+            properties: {},
+            geometry: { type: 'LineString', coordinates: unwrapPath([p1, p2]) },
+          }],
         })
 
         updateMeasurePoints([p1, p2])
@@ -781,9 +777,13 @@ export default function Map() {
       wasInCompareModeRef.current = true
       map.dragPan.disable()
       map.getCanvas().style.cursor = 'crosshair'
+      // Disable world-copy rendering so the ghost only appears once
+      map.setRenderWorldCopies(false)
     } else {
       map.dragPan.enable()
       map.getCanvas().style.cursor = ''
+      // Restore world copies
+      map.setRenderWorldCopies(true)
 
       if (wasInCompareModeRef.current) {
         wasInCompareModeRef.current = false
@@ -943,7 +943,7 @@ export default function Map() {
         <button
           onClick={() => {
             const m = mapRef.current
-            if (m) m.easeTo({ zoom: Math.min(m.getMaxZoom(), m.getZoom() + 1.2), duration: 300 })
+            if (m) m.easeTo({ zoom: Math.min(m.getMaxZoom(), m.getZoom() + 2.0), duration: 300 })
           }}
           className="w-8 h-8 bg-black/50 border border-white/15 text-white/80 rounded text-lg leading-none hover:bg-white/10 transition-colors"
           aria-label="Zoom in"
@@ -951,7 +951,7 @@ export default function Map() {
         <button
           onClick={() => {
             const m = mapRef.current
-            if (m) m.easeTo({ zoom: Math.max(m.getMinZoom(), m.getZoom() - 1.2), duration: 300 })
+            if (m) m.easeTo({ zoom: Math.max(m.getMinZoom(), m.getZoom() - 2.0), duration: 300 })
           }}
           className="w-8 h-8 bg-black/50 border border-white/15 text-white/80 rounded text-lg leading-none hover:bg-white/10 transition-colors"
           aria-label="Zoom out"
