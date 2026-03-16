@@ -12,6 +12,7 @@ import {
   computeMercatorCentroid,
   repositionGeometry,
   makeGhostFeatureCollection,
+  clipGeometryToMercatorBounds,
   EMPTY_FEATURE_COLLECTION,
 } from '@/lib/ghostGeometry'
 import {
@@ -94,6 +95,10 @@ export default function Map() {
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return
 
+    // Minimum zoom so exactly one world copy fills the viewport (no duplicates).
+    // worldWidth = 512 × 2^zoom; solve for zoom where worldWidth ≥ containerWidth.
+    const computeMinZoom = (width: number) => Math.log2(width / 512) + 0.05
+
     const map = new maplibregl.Map({
       container: containerRef.current,
       style: {
@@ -111,7 +116,7 @@ export default function Map() {
       },
       center: [20, 20],
       zoom: 2,
-      minZoom: 1.5,
+      minZoom: computeMinZoom(containerRef.current.offsetWidth),
       maxZoom: 8,
       pitch: 0,
       maxPitch: 0,
@@ -123,6 +128,18 @@ export default function Map() {
     map.dragRotate.disable()
     map.touchPitch.disable()
     map.touchZoomRotate.disableRotation()
+
+    // Intercept trackpad two-finger scroll (no ctrlKey) and pan instead of zoom.
+    // Pinch-to-zoom on Mac sets ctrlKey=true — let those through to MapLibre.
+    const handleWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey) {
+        e.preventDefault()
+        e.stopImmediatePropagation()
+        map.panBy([e.deltaX, e.deltaY], { duration: 0 })
+      }
+    }
+    const mapContainer = map.getContainer()
+    mapContainer.addEventListener('wheel', handleWheel, { passive: false, capture: true })
 
     map.on('load', () => {
       // ── Register all sources first ────────────────────────────────────────
@@ -385,6 +402,11 @@ export default function Map() {
         },
       })
 
+      // Update minZoom when the container is resized (e.g. browser window resize).
+      map.on('resize', () => {
+        map.setMinZoom(computeMinZoom(map.getContainer().offsetWidth))
+      })
+
       setIsMapLoaded(true)
 
       // Build geometry lookup for compare/ghost mode
@@ -397,7 +419,11 @@ export default function Map() {
               (feature.properties?.ISO_A3_EH as string) ||
               (feature.properties?.ISO_A3 as string)
             if (iso && iso !== '-99' && feature.geometry) {
-              lookup[iso] = feature.geometry as Polygon | MultiPolygon
+              // Clip extreme-latitude vertices (e.g. Antarctica's south-pole
+              // closure row at lat=-90°) so the ghost has no artificial flat bottom.
+              lookup[iso] = clipGeometryToMercatorBounds(
+                feature.geometry as Polygon | MultiPolygon,
+              )
             }
           }
           countryGeoLookupRef.current = lookup
@@ -750,6 +776,7 @@ export default function Map() {
     }) // end map.on('load')
 
     return () => {
+      mapContainer.removeEventListener('wheel', handleWheel, { capture: true })
       map.remove()
       mapRef.current = null
       setIsMapLoaded(false)
@@ -777,13 +804,9 @@ export default function Map() {
       wasInCompareModeRef.current = true
       map.dragPan.disable()
       map.getCanvas().style.cursor = 'crosshair'
-      // Disable world-copy rendering so the ghost only appears once
-      map.setRenderWorldCopies(false)
     } else {
       map.dragPan.enable()
       map.getCanvas().style.cursor = ''
-      // Restore world copies
-      map.setRenderWorldCopies(true)
 
       if (wasInCompareModeRef.current) {
         wasInCompareModeRef.current = false
@@ -912,7 +935,8 @@ export default function Map() {
     const src = map.getSource('aurora-bands') as maplibregl.GeoJSONSource | undefined
     if (!src) return
 
-    const useFallback = auroraVisible && !aurora.ovationGeoJSON
+    // Only show wavy fallback after a confirmed fetch failure — never during loading
+    const useFallback = auroraVisible && aurora.ovationFailed
     if (!useFallback) {
       src.setData(EMPTY_FEATURE_COLLECTION)
       return
@@ -932,7 +956,7 @@ export default function Map() {
     }
     animId = requestAnimationFrame(animate)
     return () => cancelAnimationFrame(animId)
-  }, [auroraVisible, aurora.ovationGeoJSON, isMapLoaded])
+  }, [auroraVisible, aurora.ovationFailed, isMapLoaded])
 
   return (
     <div className="relative w-full h-full">
