@@ -24,7 +24,13 @@ export default function DistanceLabel({ info, mapRef }: Props) {
 
     const update = () => {
       const pt = map.project(info.midpoint as maplibregl.LngLatLike)
-      setScreenPos({ x: pt.x, y: pt.y })
+      const container = map.getContainer()
+      const W = container.clientWidth
+      const H = container.clientHeight
+      // Clamp so the label (min-w-[180px], ~100px tall, translate(-50%,-110%)) stays in view
+      const x = Math.max(96, Math.min(W - 96, pt.x))
+      const y = Math.max(112, Math.min(H - 12, pt.y))
+      setScreenPos({ x, y })
     }
 
     update()
