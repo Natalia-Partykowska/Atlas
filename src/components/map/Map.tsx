@@ -74,6 +74,9 @@ export default function Map() {
   // Globe mode refs
   const globeModeRef = useRef<boolean>(false)
 
+  // Submarine cables cache
+  const cablesGeoJSONRef = useRef<object | null>(null)
+
   const setTooltip = useAtlasStore((s) => s.setTooltip)
   const setSelectedCountry = useAtlasStore((s) => s.setSelectedCountry)
   const compareMode = useAtlasStore((s) => s.compareMode)
@@ -84,6 +87,7 @@ export default function Map() {
   const setAntipodeMode = useAtlasStore((s) => s.setAntipodeMode)
   const globeMode = useAtlasStore((s) => s.globeMode)
   const setGlobeMode = useAtlasStore((s) => s.setGlobeMode)
+  const submarineCablesVisible = useAtlasStore((s) => s.submarineCablesVisible)
   const terminatorVisible = useAtlasStore((s) => s.terminatorVisible)
   const setTerminatorVisible = useAtlasStore((s) => s.setTerminatorVisible)
   const auroraVisible = useAtlasStore((s) => s.auroraVisible)
@@ -192,6 +196,10 @@ export default function Map() {
         type: 'geojson',
         data: EMPTY_FEATURE_COLLECTION,
       })
+      map.addSource('submarine-cables', {
+        type: 'geojson',
+        data: EMPTY_FEATURE_COLLECTION,
+      })
 
       // ── Add layers in render order (bottom → top) ─────────────────────────
 
@@ -265,7 +273,32 @@ export default function Map() {
         },
       })
 
-      // 5. Terminator glow line (above borders for visibility)
+      // 5a. Submarine cables — glow (wide, blurred)
+      map.addLayer({
+        id: 'submarine-cables-glow',
+        type: 'line',
+        source: 'submarine-cables',
+        paint: {
+          'line-color': ['get', 'color'],
+          'line-width': 4,
+          'line-blur': 5,
+          'line-opacity': 0.3,
+        },
+      })
+
+      // 5b. Submarine cables — crisp core line
+      map.addLayer({
+        id: 'submarine-cables-line',
+        type: 'line',
+        source: 'submarine-cables',
+        paint: {
+          'line-color': ['get', 'color'],
+          'line-width': 1.2,
+          'line-opacity': 0.85,
+        },
+      })
+
+      // 5c. Terminator glow line (above borders for visibility)
       map.addLayer({
         id: 'terminator-border',
         type: 'line',
@@ -915,6 +948,33 @@ export default function Map() {
       }
     }
   }, [globeMode, isMapLoaded])
+
+  // ─── Submarine cables overlay ────────────────────────────────────────────
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !isMapLoaded) return
+    const src = map.getSource('submarine-cables') as maplibregl.GeoJSONSource | undefined
+    if (!src) return
+
+    if (!submarineCablesVisible) {
+      src.setData(EMPTY_FEATURE_COLLECTION)
+      return
+    }
+
+    // Use cached data if already fetched
+    if (cablesGeoJSONRef.current) {
+      src.setData(cablesGeoJSONRef.current as Parameters<typeof src.setData>[0])
+      return
+    }
+
+    fetch('/data/submarine-cables.geojson')
+      .then((r) => r.json())
+      .then((geojson) => {
+        cablesGeoJSONRef.current = geojson
+        src.setData(geojson)
+      })
+      .catch((err) => console.error('Submarine cables fetch failed:', err))
+  }, [submarineCablesVisible, isMapLoaded])
 
   // ─── Terminator overlay ──────────────────────────────────────────────────
   useEffect(() => {

@@ -40,6 +40,8 @@ export default function Toolbar() {
   const setCompareMode = useAtlasStore((s) => s.setCompareMode)
   const setMeasureMode = useAtlasStore((s) => s.setMeasureMode)
   const setAntipodeMode = useAtlasStore((s) => s.setAntipodeMode)
+  const submarineCablesVisible = useAtlasStore((s) => s.submarineCablesVisible)
+  const setSubmarineCablesVisible = useAtlasStore((s) => s.setSubmarineCablesVisible)
   const setTerminatorVisible = useAtlasStore((s) => s.setTerminatorVisible)
   const setAuroraVisible = useAtlasStore((s) => s.setAuroraVisible)
   const auroraKp = useAtlasStore((s) => s.auroraKp)
@@ -74,6 +76,21 @@ export default function Toolbar() {
 
       {/* Divider */}
       <div className="w-36 border-t border-white/10" />
+
+      {/* Globe-exclusive features */}
+      {globeMode && (
+        <>
+          <div className="w-36 border-t border-white/10" />
+          <div className="flex flex-col gap-1.5 w-36">
+            <ToolBtn
+              label="Cables"
+              active={submarineCablesVisible}
+              onClick={() => setSubmarineCablesVisible(!submarineCablesVisible)}
+              title="Show submarine internet cables across the ocean floor"
+            />
+          </div>
+        </>
+      )}
 
       {/* Ambient overlays — stackable */}
       <div className="flex flex-col gap-1.5 w-36">
