@@ -22,7 +22,7 @@ import {
   unwrapPath,
 } from '@/lib/greatCircle'
 import { generateAuroraWavyBands } from '@/lib/aurora'
-import { computeAntipode, identifyOcean } from '@/lib/antipode'
+import { computeAntipode, identifyOcean, pointInCountry } from '@/lib/antipode'
 import { computeTerminator, computeTerminatorCurve } from '@/lib/solarTerminator'
 import DistanceLabel from '@/components/overlays/DistanceLabel'
 import AntipodeLabel from '@/components/overlays/AntipodeLabel'
@@ -56,6 +56,7 @@ export default function Map() {
   const ghostCentroidRef = useRef<[number, number] | null>(null)
   const ghostNameRef = useRef<string>('')
   const countryGeoLookupRef = useRef<Record<string, Polygon | MultiPolygon>>({})
+  const countryNameLookupRef = useRef<Record<string, string>>({})
   const pauseAndResumeAfterRef = useRef<((ms: number) => void) | null>(null)
   const wasInCompareModeRef = useRef(false)
 
@@ -429,6 +430,8 @@ export default function Map() {
               lookup[iso] = clipGeometryToMercatorBounds(
                 feature.geometry as Polygon | MultiPolygon,
               )
+              const name = feature.properties?.NAME as string | undefined
+              if (name) countryNameLookupRef.current[iso] = name
             }
           }
           countryGeoLookupRef.current = lookup
@@ -647,16 +650,18 @@ export default function Map() {
           const antipodePt = computeAntipode(lng, lat)
           const [aLng, aLat] = antipodePt
 
-          // Detect what's at the antipode using queryRenderedFeatures
-          const aScreen = map.project(new maplibregl.LngLat(aLng, aLat))
-          const aFeatures = map.queryRenderedFeatures(aScreen, {
-            layers: ['country-fills'],
-          })
+          // Identify the country at the antipode via point-in-polygon.
+          // queryRenderedFeatures is avoided here because in globe mode the
+          // antipode is on the back face and won't be in the rendered viewport.
+          const geoLookup = countryGeoLookupRef.current
+          const nameLookup = countryNameLookupRef.current
+          const matchedIso = Object.keys(geoLookup).find((iso) =>
+            pointInCountry(aLng, aLat, geoLookup[iso]),
+          )
 
           let label: string
-          if (aFeatures.length > 0) {
-            const cName = aFeatures[0].properties?.NAME || 'a country'
-            label = `In ${cName}!`
+          if (matchedIso && nameLookup[matchedIso]) {
+            label = `In ${nameLookup[matchedIso]}!`
           } else {
             const ocean = identifyOcean(aLng, aLat)
             label = `In the ${ocean} Ocean`

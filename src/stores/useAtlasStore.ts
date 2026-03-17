@@ -27,7 +27,7 @@ export const useAtlasStore = create<AtlasState>((set) => ({
   setAntipodeMode: (on: boolean) =>
     set(on ? { antipodeMode: true, compareMode: false, measureMode: false, activeLayerId: 'base' } : { antipodeMode: false }),
   setGlobeMode: (on: boolean) =>
-    set(on ? { globeMode: true, compareMode: false, measureMode: false, antipodeMode: false, activeLayerId: 'base' } : { globeMode: false }),
+    set(on ? { globeMode: true, compareMode: false, measureMode: false, antipodeMode: false } : { globeMode: false }),
   // Overlay toggles — switching on also moves to base layer
   setTerminatorVisible: (on: boolean) =>
     set(on ? { terminatorVisible: true, activeLayerId: 'base' } : { terminatorVisible: false }),
