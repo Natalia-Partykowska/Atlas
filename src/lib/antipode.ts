@@ -1,3 +1,34 @@
+import type { Polygon, MultiPolygon } from 'geojson'
+
+/** Ray-casting point-in-ring test (handles standard lng/lat rings). */
+function pointInRing(lng: number, lat: number, ring: number[][]): boolean {
+  let inside = false
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i][0], yi = ring[i][1]
+    const xj = ring[j][0], yj = ring[j][1]
+    const intersect =
+      yi > lat !== yj > lat && lng < ((xj - xi) * (lat - yi)) / (yj - yi) + xi
+    if (intersect) inside = !inside
+  }
+  return inside
+}
+
+/**
+ * Returns true if [lng, lat] falls inside the given country geometry.
+ * Uses the outer ring only (holes are rare at this scale and skipping them
+ * is fine for country-level identification).
+ */
+export function pointInCountry(
+  lng: number,
+  lat: number,
+  geometry: Polygon | MultiPolygon,
+): boolean {
+  if (geometry.type === 'Polygon') {
+    return pointInRing(lng, lat, geometry.coordinates[0])
+  }
+  return geometry.coordinates.some((poly) => pointInRing(lng, lat, poly[0]))
+}
+
 /** Compute the antipodal point (exact opposite side of Earth) */
 export function computeAntipode(lng: number, lat: number): [number, number] {
   const antipodeLng = lng >= 0 ? lng - 180 : lng + 180
