@@ -80,10 +80,9 @@ export default function Toolbar() {
       {/* Globe-exclusive features */}
       {globeMode && (
         <>
-          <div className="w-36 border-t border-white/10" />
           <div className="flex flex-col gap-1.5 w-36">
             <ToolBtn
-              label="Cables"
+              label="Sea Cables"
               active={submarineCablesVisible}
               onClick={() => setSubmarineCablesVisible(!submarineCablesVisible)}
               title="Show submarine internet cables across the ocean floor"
