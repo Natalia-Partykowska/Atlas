@@ -83,6 +83,7 @@ export default function Map() {
   const antipodeMode = useAtlasStore((s) => s.antipodeMode)
   const setAntipodeMode = useAtlasStore((s) => s.setAntipodeMode)
   const globeMode = useAtlasStore((s) => s.globeMode)
+  const setGlobeMode = useAtlasStore((s) => s.setGlobeMode)
   const terminatorVisible = useAtlasStore((s) => s.terminatorVisible)
   const setTerminatorVisible = useAtlasStore((s) => s.setTerminatorVisible)
   const auroraVisible = useAtlasStore((s) => s.auroraVisible)
@@ -904,6 +905,7 @@ export default function Map() {
     if (globeMode) {
       map.setProjection({ type: 'globe' })
       map.setMinZoom(0.5)
+      map.easeTo({ zoom: 2.5, duration: 600 })
     } else {
       map.setProjection({ type: 'mercator' })
       const restoredMin = computeMinZoom(map.getContainer().offsetWidth)
@@ -993,6 +995,26 @@ export default function Map() {
       <div ref={containerRef} className="w-full h-full" />
       <DistanceLabel info={measureInfo} mapRef={mapRef} />
       <AntipodeLabel info={antipodeInfo} mapRef={mapRef} />
+      {/* Projection pill toggle — bottom-center */}
+      <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-10 flex rounded-lg border border-white/15 bg-black/50 backdrop-blur-sm overflow-hidden">
+        {(['Flat', 'Globe'] as const).map((label) => {
+          const active = label === 'Globe' ? globeMode : !globeMode
+          return (
+            <button
+              key={label}
+              onClick={() => setGlobeMode(label === 'Globe')}
+              className={[
+                'px-4 py-1.5 text-xs font-medium transition-all duration-200',
+                active
+                  ? 'bg-white/15 text-white'
+                  : 'text-white/45 hover:text-white/75 hover:bg-white/5',
+              ].join(' ')}
+            >
+              {label}
+            </button>
+          )
+        })}
+      </div>
       <div className="absolute bottom-8 right-3 z-10 flex flex-col gap-1">
         <button
           onClick={() => {
