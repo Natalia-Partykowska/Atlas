@@ -40,7 +40,6 @@ export default function Toolbar() {
   const setCompareMode = useAtlasStore((s) => s.setCompareMode)
   const setMeasureMode = useAtlasStore((s) => s.setMeasureMode)
   const setAntipodeMode = useAtlasStore((s) => s.setAntipodeMode)
-  const setGlobeMode = useAtlasStore((s) => s.setGlobeMode)
   const setTerminatorVisible = useAtlasStore((s) => s.setTerminatorVisible)
   const setAuroraVisible = useAtlasStore((s) => s.setAuroraVisible)
   const auroraKp = useAtlasStore((s) => s.auroraKp)
@@ -49,19 +48,6 @@ export default function Toolbar() {
 
   return (
     <div className="fixed top-4 right-4 z-40 flex flex-col items-end gap-2">
-      {/* View projection */}
-      <div className="flex flex-col gap-1.5 w-36">
-        <ToolBtn
-          label="🌍 Globe"
-          active={globeMode}
-          onClick={() => setGlobeMode(!globeMode)}
-          title="Switch between flat Mercator and globe projection"
-        />
-      </div>
-
-      {/* Divider */}
-      <div className="w-36 border-t border-white/10" />
-
       {/* Interactive tools — mutually exclusive */}
       <div className="flex flex-col gap-1.5 w-36">
         <ToolBtn
@@ -70,12 +56,14 @@ export default function Toolbar() {
           onClick={() => setMeasureMode(!measureMode)}
           title="Measure true great-circle distance vs Mercator straight line"
         />
-        <ToolBtn
-          label="Compare Sizes"
-          active={compareMode}
-          onClick={() => setCompareMode(!compareMode)}
-          title="Drag country outlines to compare sizes (Mercator distortion)"
-        />
+        {!globeMode && (
+          <ToolBtn
+            label="Compare Sizes"
+            active={compareMode}
+            onClick={() => setCompareMode(!compareMode)}
+            title="Drag country outlines to compare sizes (Mercator distortion)"
+          />
+        )}
         <ToolBtn
           label="Antipodes"
           active={antipodeMode}
