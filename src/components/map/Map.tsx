@@ -492,7 +492,7 @@ export default function Map() {
       }
 
       const isAnyInteractiveMode = () =>
-        compareModeRef.current || measureModeRef.current || antipodeModeRef.current || globeModeRef.current
+        compareModeRef.current || measureModeRef.current || antipodeModeRef.current
 
       const animate = (timestamp: number) => {
         if (!isPaused && !isAnyInteractiveMode()) {
@@ -939,6 +939,8 @@ export default function Map() {
       map.setProjection({ type: 'globe' })
       map.setMinZoom(0.5)
       map.easeTo({ zoom: 2.5, duration: 600 })
+      // Let the zoom ease complete before rotation starts
+      pauseAndResumeAfterRef.current?.(700)
     } else {
       map.setProjection({ type: 'mercator' })
       const restoredMin = computeMinZoom(map.getContainer().offsetWidth)
