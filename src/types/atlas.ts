@@ -40,6 +40,7 @@ export interface AtlasState {
   antipodeMode: boolean
   globeMode: boolean
   submarineCablesVisible: boolean
+  satellitesVisible: boolean
   terminatorVisible: boolean
   auroraVisible: boolean
   auroraKp: number
@@ -54,6 +55,7 @@ export interface AtlasState {
   setAntipodeMode: (on: boolean) => void
   setGlobeMode: (on: boolean) => void
   setSubmarineCablesVisible: (on: boolean) => void
+  setSatellitesVisible: (on: boolean) => void
   setTerminatorVisible: (on: boolean) => void
   setAuroraVisible: (on: boolean) => void
   setAuroraInfo: (kp: number, label: string, dataUnavailable: boolean) => void
