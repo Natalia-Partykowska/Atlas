@@ -71,10 +71,12 @@ export function propagateAll(
 
   for (const sat of satellites) {
     try {
-      const result = propagate(sat.satrec, date)
-      if (typeof result.position === 'boolean' || !result.position) continue
+      const pv = propagate(sat.satrec, date)
+      if (!pv) continue
+      const pos = pv.position
+      if (typeof pos === 'boolean' || !pos) continue
 
-      const geodetic = eciToGeodetic(result.position, gmst)
+      const geodetic = eciToGeodetic(pos, gmst)
       const lng = degreesLong(geodetic.longitude)
       const lat = degreesLat(geodetic.latitude)
       const altitudeKm = geodetic.height
@@ -137,9 +139,11 @@ export function buildISSTrail(
     const futureDate = new Date(date.getTime() + t)
     const gmst = gstime(futureDate)
     try {
-      const result = propagate(iss.satrec, futureDate)
-      if (typeof result.position === 'boolean' || !result.position) continue
-      const geodetic = eciToGeodetic(result.position, gmst)
+      const pv = propagate(iss.satrec, futureDate)
+      if (!pv) continue
+      const pos = pv.position
+      if (typeof pos === 'boolean' || !pos) continue
+      const geodetic = eciToGeodetic(pos, gmst)
       const lng = degreesLong(geodetic.longitude)
       const lat = degreesLat(geodetic.latitude)
       if (!isNaN(lng) && !isNaN(lat)) {
