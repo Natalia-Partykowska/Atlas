@@ -24,6 +24,14 @@ import {
 import { generateAuroraWavyBands } from '@/lib/aurora'
 import { computeAntipode, identifyOcean, pointInCountry } from '@/lib/antipode'
 import { computeTerminator, computeTerminatorCurve } from '@/lib/solarTerminator'
+import {
+  parseTLEData,
+  propagateAll,
+  buildSatelliteGeoJSON,
+  buildISSTrail,
+  SATELLITE_GROUPS,
+} from '@/lib/satellites'
+import type { ParsedSatellite, SatTLEEntry } from '@/lib/satellites'
 import DistanceLabel from '@/components/overlays/DistanceLabel'
 import AntipodeLabel from '@/components/overlays/AntipodeLabel'
 import type { AntipodeInfo } from '@/components/overlays/AntipodeLabel'
@@ -77,6 +85,10 @@ export default function Map() {
   // Submarine cables cache
   const cablesGeoJSONRef = useRef<object | null>(null)
 
+  // Satellite refs
+  const satelliteTLERef = useRef<ParsedSatellite[] | null>(null)
+  const satelliteIntervalRef = useRef<number | null>(null)
+
   const setTooltip = useAtlasStore((s) => s.setTooltip)
   const setSelectedCountry = useAtlasStore((s) => s.setSelectedCountry)
   const compareMode = useAtlasStore((s) => s.compareMode)
@@ -88,6 +100,7 @@ export default function Map() {
   const globeMode = useAtlasStore((s) => s.globeMode)
   const setGlobeMode = useAtlasStore((s) => s.setGlobeMode)
   const submarineCablesVisible = useAtlasStore((s) => s.submarineCablesVisible)
+  const satellitesVisible = useAtlasStore((s) => s.satellitesVisible)
   const terminatorVisible = useAtlasStore((s) => s.terminatorVisible)
   const setTerminatorVisible = useAtlasStore((s) => s.setTerminatorVisible)
   const auroraVisible = useAtlasStore((s) => s.auroraVisible)
@@ -200,6 +213,14 @@ export default function Map() {
         type: 'geojson',
         data: EMPTY_FEATURE_COLLECTION,
       })
+      map.addSource('satellites', {
+        type: 'geojson',
+        data: EMPTY_FEATURE_COLLECTION,
+      })
+      map.addSource('satellite-trail', {
+        type: 'geojson',
+        data: EMPTY_FEATURE_COLLECTION,
+      })
 
       // ── Add layers in render order (bottom → top) ─────────────────────────
 
@@ -295,6 +316,100 @@ export default function Map() {
           'line-color': ['get', 'color'],
           'line-width': 1.2,
           'line-opacity': 0.85,
+        },
+      })
+
+      // 5d. Satellite trail — ISS predicted ground track
+      map.addLayer({
+        id: 'satellite-trail',
+        type: 'line',
+        source: 'satellite-trail',
+        paint: {
+          'line-color': SATELLITE_GROUPS.iss.color,
+          'line-width': 1,
+          'line-dasharray': [4, 4],
+          'line-opacity': 0.3,
+        },
+      })
+
+      // 5e. Satellites — outer glow
+      map.addLayer({
+        id: 'satellites-glow',
+        type: 'circle',
+        source: 'satellites',
+        paint: {
+          'circle-radius': [
+            'match', ['get', 'group'],
+            'iss', SATELLITE_GROUPS.iss.glowRadius,
+            'gps', SATELLITE_GROUPS.gps.glowRadius,
+            'station', SATELLITE_GROUPS.station.glowRadius,
+            SATELLITE_GROUPS.starlink.glowRadius,
+          ],
+          'circle-color': [
+            'match', ['get', 'group'],
+            'iss', SATELLITE_GROUPS.iss.color,
+            'gps', SATELLITE_GROUPS.gps.color,
+            'station', SATELLITE_GROUPS.station.color,
+            SATELLITE_GROUPS.starlink.color,
+          ],
+          'circle-blur': 1,
+          'circle-opacity': [
+            'match', ['get', 'group'],
+            'iss', 0.4,
+            'gps', 0.25,
+            'station', 0.25,
+            0.2,
+          ],
+        },
+      })
+
+      // 5f. Satellites — inner crisp dot
+      map.addLayer({
+        id: 'satellites-dot',
+        type: 'circle',
+        source: 'satellites',
+        paint: {
+          'circle-radius': [
+            'match', ['get', 'group'],
+            'iss', SATELLITE_GROUPS.iss.dotRadius,
+            'gps', SATELLITE_GROUPS.gps.dotRadius,
+            'station', SATELLITE_GROUPS.station.dotRadius,
+            SATELLITE_GROUPS.starlink.dotRadius,
+          ],
+          'circle-color': [
+            'match', ['get', 'group'],
+            'iss', SATELLITE_GROUPS.iss.color,
+            'gps', SATELLITE_GROUPS.gps.color,
+            'station', SATELLITE_GROUPS.station.color,
+            SATELLITE_GROUPS.starlink.color,
+          ],
+          'circle-opacity': [
+            'match', ['get', 'group'],
+            'iss', SATELLITE_GROUPS.iss.opacity,
+            'gps', SATELLITE_GROUPS.gps.opacity,
+            'station', SATELLITE_GROUPS.station.opacity,
+            SATELLITE_GROUPS.starlink.opacity,
+          ],
+        },
+      })
+
+      // 5g. Satellites — ISS name label
+      map.addLayer({
+        id: 'satellites-label',
+        type: 'symbol',
+        source: 'satellites',
+        filter: ['==', ['get', 'group'], 'iss'],
+        layout: {
+          'text-field': ['get', 'name'],
+          'text-font': ['Open Sans Semibold'],
+          'text-size': 11,
+          'text-offset': [0, 1.5],
+          'text-anchor': 'top',
+        },
+        paint: {
+          'text-color': SATELLITE_GROUPS.iss.color,
+          'text-halo-color': 'rgba(0,0,0,0.8)',
+          'text-halo-width': 1.5,
         },
       })
 
@@ -977,6 +1092,72 @@ export default function Map() {
       })
       .catch((err) => console.error('Submarine cables fetch failed:', err))
   }, [submarineCablesVisible, isMapLoaded])
+
+  // ─── Satellite overlay ──────────────────────────────────────────────────
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !isMapLoaded) return
+
+    const satSrc = map.getSource('satellites') as maplibregl.GeoJSONSource | undefined
+    const trailSrc = map.getSource('satellite-trail') as maplibregl.GeoJSONSource | undefined
+    if (!satSrc || !trailSrc) return
+
+    if (!satellitesVisible || !globeMode) {
+      satSrc.setData(EMPTY_FEATURE_COLLECTION)
+      trailSrc.setData(EMPTY_FEATURE_COLLECTION)
+      if (satelliteIntervalRef.current !== null) {
+        clearInterval(satelliteIntervalRef.current)
+        satelliteIntervalRef.current = null
+      }
+      return
+    }
+
+    // Fetch + parse TLEs (cached in ref)
+    const start = () => {
+      const sats = satelliteTLERef.current
+      if (!sats || sats.length === 0) return
+
+      // Initial render
+      const now = new Date()
+      const positions = propagateAll(sats, now)
+      satSrc.setData(buildSatelliteGeoJSON(positions))
+      trailSrc.setData(buildISSTrail(sats, now))
+
+      // Animate at 5Hz
+      let trailTick = 0
+      satelliteIntervalRef.current = window.setInterval(() => {
+        const t = new Date()
+        const pos = propagateAll(sats, t)
+        satSrc.setData(buildSatelliteGeoJSON(pos))
+
+        // Update ISS trail every ~30s (150 ticks × 200ms)
+        trailTick++
+        if (trailTick >= 150) {
+          trailTick = 0
+          trailSrc.setData(buildISSTrail(sats, t))
+        }
+      }, 200)
+    }
+
+    if (satelliteTLERef.current) {
+      start()
+    } else {
+      fetch('/data/satellites.json')
+        .then((r) => r.json())
+        .then((data: SatTLEEntry[]) => {
+          satelliteTLERef.current = parseTLEData(data)
+          start()
+        })
+        .catch((err) => console.error('Satellite data fetch failed:', err))
+    }
+
+    return () => {
+      if (satelliteIntervalRef.current !== null) {
+        clearInterval(satelliteIntervalRef.current)
+        satelliteIntervalRef.current = null
+      }
+    }
+  }, [satellitesVisible, globeMode, isMapLoaded])
 
   // ─── Terminator overlay ──────────────────────────────────────────────────
   useEffect(() => {

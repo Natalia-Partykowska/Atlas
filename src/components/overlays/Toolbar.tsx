@@ -42,6 +42,8 @@ export default function Toolbar() {
   const setAntipodeMode = useAtlasStore((s) => s.setAntipodeMode)
   const submarineCablesVisible = useAtlasStore((s) => s.submarineCablesVisible)
   const setSubmarineCablesVisible = useAtlasStore((s) => s.setSubmarineCablesVisible)
+  const satellitesVisible = useAtlasStore((s) => s.satellitesVisible)
+  const setSatellitesVisible = useAtlasStore((s) => s.setSatellitesVisible)
   const setTerminatorVisible = useAtlasStore((s) => s.setTerminatorVisible)
   const setAuroraVisible = useAtlasStore((s) => s.setAuroraVisible)
   const auroraKp = useAtlasStore((s) => s.auroraKp)
@@ -86,6 +88,12 @@ export default function Toolbar() {
               active={submarineCablesVisible}
               onClick={() => setSubmarineCablesVisible(!submarineCablesVisible)}
               title="Show submarine internet cables across the ocean floor"
+            />
+            <ToolBtn
+              label="Satellites"
+              active={satellitesVisible}
+              onClick={() => setSatellitesVisible(!satellitesVisible)}
+              title="Show ~250 real-time satellites (ISS, Starlink, GPS)"
             />
           </div>
         </>
