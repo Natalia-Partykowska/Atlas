@@ -11,6 +11,7 @@ use tracing::info;
 mod catalog;
 mod celestrak;
 mod config;
+mod propagate;
 
 use catalog::SharedCatalog;
 
@@ -61,6 +62,18 @@ async fn main() {
     let initial = catalog::load()
         .await
         .expect("initial catalog load failed — cannot start");
+
+    // Benchmark one full propagation tick so we know the upper bound on the 1 Hz
+    // broadcast budget (target <50ms for the full catalog on shared-cpu-1x).
+    let bench_start = std::time::Instant::now();
+    let positions = propagate::propagate_all(&initial, chrono::Utc::now());
+    info!(
+        propagated = positions.len(),
+        dropped = initial.len() - positions.len(),
+        elapsed_ms = bench_start.elapsed().as_millis() as u64,
+        "initial propagation benchmark"
+    );
+
     let shared: SharedCatalog = Arc::new(ArcSwap::from_pointee(initial));
     catalog::spawn_daily_refresh(shared.clone());
 

@@ -38,6 +38,7 @@ pub struct CatalogEntry {
     pub name: String,
     pub group: Group,
     pub constants: sgp4::Constants,
+    pub epoch: DateTime<Utc>,
 }
 
 pub struct Catalog {
@@ -62,7 +63,11 @@ pub async fn load() -> Result<Catalog> {
     let mut entries: Vec<CatalogEntry> = Vec::new();
     let mut per_group_counts: Vec<(&str, usize)> = Vec::new();
 
-    for (group, group_name) in SOURCES {
+    for (idx, (group, group_name)) in SOURCES.iter().enumerate() {
+        if idx > 0 {
+            // CelesTrak free API rate-limits aggressive back-to-back fetches.
+            tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+        }
         let raw = match celestrak::fetch_group(&client, group_name).await {
             Ok(r) => r,
             Err(e) => {
@@ -119,6 +124,7 @@ fn build_entry(raw: &RawEntry, group: Group) -> Result<CatalogEntry> {
     .context("parse TLE")?;
 
     let norad_id = elements.norad_id;
+    let epoch = elements.datetime.and_utc();
     let constants = sgp4::Constants::from_elements(&elements).context("sgp4 constants")?;
 
     Ok(CatalogEntry {
@@ -126,6 +132,7 @@ fn build_entry(raw: &RawEntry, group: Group) -> Result<CatalogEntry> {
         name: raw.name.clone(),
         group,
         constants,
+        epoch,
     })
 }
 
