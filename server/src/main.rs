@@ -1,4 +1,5 @@
 use std::net::SocketAddr;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
@@ -12,13 +13,12 @@ mod catalog;
 mod celestrak;
 mod config;
 mod propagate;
+mod protocol;
+mod viewport;
+mod ws;
 
 use catalog::SharedCatalog;
-
-#[derive(Clone)]
-struct AppState {
-    catalog: SharedCatalog,
-}
+use ws::StreamState;
 
 #[derive(Serialize)]
 struct HealthResponse {
@@ -27,9 +27,10 @@ struct HealthResponse {
     version: &'static str,
     catalog_size: usize,
     catalog_loaded_at: String,
+    connections: usize,
 }
 
-async fn health(State(state): State<AppState>) -> (StatusCode, Json<HealthResponse>) {
+async fn health(State(state): State<StreamState>) -> (StatusCode, Json<HealthResponse>) {
     let cat = state.catalog.load();
     (
         StatusCode::OK,
@@ -39,12 +40,13 @@ async fn health(State(state): State<AppState>) -> (StatusCode, Json<HealthRespon
             version: env!("CARGO_PKG_VERSION"),
             catalog_size: cat.len(),
             catalog_loaded_at: cat.loaded_at.to_rfc3339(),
+            connections: state.connections.load(Ordering::Relaxed),
         }),
     )
 }
 
 async fn root() -> &'static str {
-    "atlas-orbit: real-time orbital streaming service. See /health."
+    "atlas-orbit: real-time orbital streaming service. See /health, /stream."
 }
 
 #[tokio::main]
@@ -63,8 +65,6 @@ async fn main() {
         .await
         .expect("initial catalog load failed — cannot start");
 
-    // Benchmark one full propagation tick so we know the upper bound on the 1 Hz
-    // broadcast budget (target <50ms for the full catalog on shared-cpu-1x).
     let bench_start = std::time::Instant::now();
     let positions = propagate::propagate_all(&initial, chrono::Utc::now());
     info!(
@@ -77,8 +77,11 @@ async fn main() {
     let shared: SharedCatalog = Arc::new(ArcSwap::from_pointee(initial));
     catalog::spawn_daily_refresh(shared.clone());
 
-    let state = AppState {
+    let (tx, connections) = ws::spawn_broadcast_tick(shared.clone());
+    let state = StreamState {
         catalog: shared.clone(),
+        tx,
+        connections,
     };
 
     let cors = CorsLayer::new()
@@ -88,6 +91,7 @@ async fn main() {
     let app = Router::new()
         .route("/", get(root))
         .route("/health", get(health))
+        .route("/stream", get(ws::stream_handler))
         .with_state(state)
         .layer(cors)
         .layer(TraceLayer::new_for_http());
