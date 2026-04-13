@@ -11,7 +11,14 @@ import type { FeatureCollection, Feature, Point, LineString } from 'geojson'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-export type SatGroup = 'iss' | 'starlink' | 'gps' | 'station'
+export type SatGroup =
+  | 'iss'
+  | 'starlink'
+  | 'gps'
+  | 'station'
+  | 'geo'
+  | 'debris'
+  | 'active'
 
 export interface SatTLEEntry {
   name: string
@@ -41,6 +48,9 @@ export const SATELLITE_GROUPS = {
   station:  { color: '#FFD700', dotRadius: 3,   glowRadius: 7,  opacity: 0.7  },
   starlink: { color: '#00E5FF', dotRadius: 1.5, glowRadius: 4,  opacity: 0.7  },
   gps:      { color: '#69F0AE', dotRadius: 3,   glowRadius: 7,  opacity: 0.85 },
+  geo:      { color: '#B388FF', dotRadius: 3,   glowRadius: 7,  opacity: 0.9  },
+  debris:   { color: '#FF7043', dotRadius: 2,   glowRadius: 4,  opacity: 0.75 },
+  active:   { color: '#82B1FF', dotRadius: 2.5, glowRadius: 6,  opacity: 0.85 },
 } as const
 
 // ─── Parsing ─────────────────────────────────────────────────────────────────

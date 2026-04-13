@@ -18,7 +18,11 @@ pub const SOURCES: &[(Group, &str)] = &[
     (Group::Active, "active"),
 ];
 
-const USER_AGENT: &str = concat!("atlas-orbit/", env!("CARGO_PKG_VERSION"));
+const USER_AGENT: &str = concat!(
+    "Mozilla/5.0 (compatible; atlas-orbit/",
+    env!("CARGO_PKG_VERSION"),
+    "; +https://github.com/Natalia-Partykowska)"
+);
 
 pub struct RawEntry {
     pub name: String,
