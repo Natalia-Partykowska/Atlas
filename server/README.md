@@ -36,11 +36,13 @@ Environment variables:
 | `ALLOWED_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | Comma-separated CORS allow-list |
 | `RUST_LOG` | `atlas_orbit=info,tower_http=info` | tracing env filter |
 
-## Deploy (future — Phase 5)
+## Deploy
+
+Hosted on [Railway](https://railway.com). The service is detected from the `Dockerfile`; no platform config file is committed.
 
 ```bash
-fly launch    # first-time only
-fly deploy
+cd server
+railway up
 ```
 
-`fly.toml` is preconfigured for a single 512 MB shared-cpu-1x machine in `iad`.
+Env vars (`ALLOWED_ORIGINS`, `RUST_LOG`) are managed via the Railway dashboard or `railway variables --set`. `PORT` is injected by Railway automatically.

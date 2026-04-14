@@ -1,6 +1,6 @@
 # Multi-stage build for a small runtime image.
 
-FROM rust:1.82-slim AS builder
+FROM rust:1.86-slim AS builder
 WORKDIR /app
 
 # Cache dependencies first
