@@ -1244,6 +1244,11 @@ export default function Map() {
         onConnect: () => {
           usingWS = true
           clearFallbackTimer()
+          // Kill any local loop that may have started during the handshake
+          // and flush stale local paint so the first WS batch lands onto a
+          // clean source (no flicker of ~262 bundled sats under the ~17k stream).
+          stopLocal()
+          satSrc.setData(EMPTY_FEATURE_COLLECTION)
           orbit?.updateViewport(currentViewport())
         },
         onDisconnect: () => {
@@ -1257,10 +1262,14 @@ export default function Map() {
         },
       })
 
-      // If the server never responds, fall back after 3s.
+      // Initial connection budget: 8s. Railway cold-starts and the first WS
+      // upgrade can take several seconds; 3s was too aggressive and caused
+      // the local loop to flash before WS took over.
       fallbackTimer = window.setTimeout(() => {
-        if (!gotFirstBatch) ensureLocalTLEsThenStart()
-      }, 3000)
+        if (gotFirstBatch) return
+        if (orbit?.isLive()) return // WS still connecting — give it more time
+        ensureLocalTLEsThenStart()
+      }, 8000)
 
       // Sync viewport on pan/zoom (throttled to ~5 Hz).
       moveendHandler = () => {

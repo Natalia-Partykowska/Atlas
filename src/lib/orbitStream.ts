@@ -11,6 +11,7 @@ export interface ViewportBounds {
 
 export interface OrbitStreamHandle {
   updateViewport: (bounds: ViewportBounds) => void
+  isLive: () => boolean
   close: () => void
 }
 
@@ -116,6 +117,10 @@ export function connectOrbitStream(
 
   return {
     updateViewport: sendViewport,
+    isLive: () =>
+      ws !== null &&
+      (ws.readyState === WebSocket.OPEN ||
+        ws.readyState === WebSocket.CONNECTING),
     close: () => {
       closedByCaller = true
       if (ws) {
