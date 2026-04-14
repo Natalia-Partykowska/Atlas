@@ -44,13 +44,13 @@ export interface SatPosition {
 // ─── Group styling config ────────────────────────────────────────────────────
 
 export const SATELLITE_GROUPS = {
-  iss:      { color: '#FFD700', dotRadius: 6,   glowRadius: 14, opacity: 1.0  },
-  station:  { color: '#FFD700', dotRadius: 3,   glowRadius: 7,  opacity: 0.7  },
-  starlink: { color: '#00E5FF', dotRadius: 1.5, glowRadius: 4,  opacity: 0.7  },
-  gps:      { color: '#69F0AE', dotRadius: 3,   glowRadius: 7,  opacity: 0.85 },
-  geo:      { color: '#B388FF', dotRadius: 3,   glowRadius: 7,  opacity: 0.9  },
-  debris:   { color: '#FF7043', dotRadius: 2,   glowRadius: 4,  opacity: 0.75 },
-  active:   { color: '#82B1FF', dotRadius: 2.5, glowRadius: 6,  opacity: 0.85 },
+  iss:      { color: '#FFD700', dotRadius: 5,   glowRadius: 12, opacity: 1.0  },
+  station:  { color: '#FFD700', dotRadius: 2,   glowRadius: 4,  opacity: 0.6  },
+  starlink: { color: '#00E5FF', dotRadius: 1,   glowRadius: 2,  opacity: 0.5  },
+  gps:      { color: '#69F0AE', dotRadius: 2,   glowRadius: 4,  opacity: 0.7  },
+  geo:      { color: '#B388FF', dotRadius: 2,   glowRadius: 4,  opacity: 0.7  },
+  debris:   { color: '#FF7043', dotRadius: 1,   glowRadius: 2,  opacity: 0.45 },
+  active:   { color: '#82B1FF', dotRadius: 1.2, glowRadius: 3,  opacity: 0.55 },
 } as const
 
 // ─── Parsing ─────────────────────────────────────────────────────────────────
