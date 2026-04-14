@@ -31,7 +31,9 @@ import {
   buildISSTrail,
   SATELLITE_GROUPS,
 } from '@/lib/satellites'
-import type { ParsedSatellite, SatTLEEntry } from '@/lib/satellites'
+import type { ParsedSatellite, SatTLEEntry, SatPosition } from '@/lib/satellites'
+import { connectOrbitStream } from '@/lib/orbitStream'
+import type { OrbitStreamHandle, ViewportBounds } from '@/lib/orbitStream'
 import DistanceLabel from '@/components/overlays/DistanceLabel'
 import AntipodeLabel from '@/components/overlays/AntipodeLabel'
 import type { AntipodeInfo } from '@/components/overlays/AntipodeLabel'
@@ -343,6 +345,9 @@ export default function Map() {
             'iss', SATELLITE_GROUPS.iss.glowRadius,
             'gps', SATELLITE_GROUPS.gps.glowRadius,
             'station', SATELLITE_GROUPS.station.glowRadius,
+            'geo', SATELLITE_GROUPS.geo.glowRadius,
+            'debris', SATELLITE_GROUPS.debris.glowRadius,
+            'active', SATELLITE_GROUPS.active.glowRadius,
             SATELLITE_GROUPS.starlink.glowRadius,
           ],
           'circle-color': [
@@ -350,6 +355,9 @@ export default function Map() {
             'iss', SATELLITE_GROUPS.iss.color,
             'gps', SATELLITE_GROUPS.gps.color,
             'station', SATELLITE_GROUPS.station.color,
+            'geo', SATELLITE_GROUPS.geo.color,
+            'debris', SATELLITE_GROUPS.debris.color,
+            'active', SATELLITE_GROUPS.active.color,
             SATELLITE_GROUPS.starlink.color,
           ],
           'circle-blur': 1,
@@ -358,6 +366,9 @@ export default function Map() {
             'iss', 0.4,
             'gps', 0.25,
             'station', 0.25,
+            'geo', 0.25,
+            'debris', 0.15,
+            'active', 0.2,
             0.2,
           ],
         },
@@ -374,6 +385,9 @@ export default function Map() {
             'iss', SATELLITE_GROUPS.iss.dotRadius,
             'gps', SATELLITE_GROUPS.gps.dotRadius,
             'station', SATELLITE_GROUPS.station.dotRadius,
+            'geo', SATELLITE_GROUPS.geo.dotRadius,
+            'debris', SATELLITE_GROUPS.debris.dotRadius,
+            'active', SATELLITE_GROUPS.active.dotRadius,
             SATELLITE_GROUPS.starlink.dotRadius,
           ],
           'circle-color': [
@@ -381,6 +395,9 @@ export default function Map() {
             'iss', SATELLITE_GROUPS.iss.color,
             'gps', SATELLITE_GROUPS.gps.color,
             'station', SATELLITE_GROUPS.station.color,
+            'geo', SATELLITE_GROUPS.geo.color,
+            'debris', SATELLITE_GROUPS.debris.color,
+            'active', SATELLITE_GROUPS.active.color,
             SATELLITE_GROUPS.starlink.color,
           ],
           'circle-opacity': [
@@ -388,6 +405,9 @@ export default function Map() {
             'iss', SATELLITE_GROUPS.iss.opacity,
             'gps', SATELLITE_GROUPS.gps.opacity,
             'station', SATELLITE_GROUPS.station.opacity,
+            'geo', SATELLITE_GROUPS.geo.opacity,
+            'debris', SATELLITE_GROUPS.debris.opacity,
+            'active', SATELLITE_GROUPS.active.opacity,
             SATELLITE_GROUPS.starlink.opacity,
           ],
         },
@@ -1112,25 +1132,19 @@ export default function Map() {
       return
     }
 
-    // Fetch + parse TLEs (cached in ref)
-    const start = () => {
+    // Local SGP4 path — same as before, kept as the fallback when the WS server
+    // is unreachable or drops the connection.
+    const startLocal = () => {
       const sats = satelliteTLERef.current
       if (!sats || sats.length === 0) return
-
-      // Initial render
       const now = new Date()
-      const positions = propagateAll(sats, now)
-      satSrc.setData(buildSatelliteGeoJSON(positions))
+      satSrc.setData(buildSatelliteGeoJSON(propagateAll(sats, now)))
       trailSrc.setData(buildISSTrail(sats, now))
 
-      // Animate at 5Hz
       let trailTick = 0
       satelliteIntervalRef.current = window.setInterval(() => {
         const t = new Date()
-        const pos = propagateAll(sats, t)
-        satSrc.setData(buildSatelliteGeoJSON(pos))
-
-        // Update ISS trail every ~30s (150 ticks × 200ms)
+        satSrc.setData(buildSatelliteGeoJSON(propagateAll(sats, t)))
         trailTick++
         if (trailTick >= 150) {
           trailTick = 0
@@ -1139,23 +1153,144 @@ export default function Map() {
       }, 200)
     }
 
-    if (satelliteTLERef.current) {
-      start()
-    } else {
-      fetch('/data/satellites.json')
-        .then((r) => r.json())
-        .then((data: SatTLEEntry[]) => {
-          satelliteTLERef.current = parseTLEData(data)
-          start()
-        })
-        .catch((err) => console.error('Satellite data fetch failed:', err))
+    const ensureLocalTLEsThenStart = () => {
+      if (satelliteIntervalRef.current !== null) return // already running
+      if (satelliteTLERef.current) {
+        startLocal()
+      } else {
+        fetch('/data/satellites.json')
+          .then((r) => r.json())
+          .then((data: SatTLEEntry[]) => {
+            satelliteTLERef.current = parseTLEData(data)
+            // Only start if we're still in the "want satellites" state.
+            if (satelliteIntervalRef.current === null) startLocal()
+          })
+          .catch((err) => console.error('Satellite data fetch failed:', err))
+      }
     }
 
-    return () => {
+    // Viewport bounds helper. On the globe projection `map.getBounds()` returns
+    // a Mercator-style box that doesn't track the actually-visible hemisphere,
+    // so viewport culling would drop most of the catalog. The whole Earth is
+    // always on screen in globe mode anyway, so we ship the full world.
+    const currentViewport = (): ViewportBounds => {
+      if (globeMode) {
+        return { west: -180, south: -90, east: 180, north: 90 }
+      }
+      const b = map.getBounds()
+      return {
+        west: Math.max(-180, b.getWest()),
+        south: Math.max(-90, b.getSouth()),
+        east: Math.min(180, b.getEast()),
+        north: Math.min(90, b.getNorth()),
+      }
+    }
+
+    const wsUrl = import.meta.env.VITE_ORBIT_WS_URL as string | undefined
+
+    let orbit: OrbitStreamHandle | null = null
+    let usingWS = false
+    let gotFirstBatch = false
+    let fallbackTimer: number | null = null
+    let moveendHandler: (() => void) | null = null
+    let moveThrottle: number | null = null
+
+    const clearFallbackTimer = () => {
+      if (fallbackTimer !== null) {
+        clearTimeout(fallbackTimer)
+        fallbackTimer = null
+      }
+    }
+
+    const stopLocal = () => {
       if (satelliteIntervalRef.current !== null) {
         clearInterval(satelliteIntervalRef.current)
         satelliteIntervalRef.current = null
       }
+    }
+
+    const renderWSPositions = (positions: SatPosition[]) => {
+      satSrc.setData(buildSatelliteGeoJSON(positions))
+      // ISS trail still comes from local TLEs — propagate one-off on first
+      // WS batch so the gold arc is visible without keeping the 5 Hz loop alive.
+      if (!gotFirstBatch) {
+        gotFirstBatch = true
+        stopLocal()
+        const drawTrail = () => {
+          const sats = satelliteTLERef.current
+          if (sats && sats.length > 0) {
+            trailSrc.setData(buildISSTrail(sats, new Date()))
+          }
+        }
+        if (satelliteTLERef.current) {
+          drawTrail()
+        } else {
+          fetch('/data/satellites.json')
+            .then((r) => r.json())
+            .then((data: SatTLEEntry[]) => {
+              satelliteTLERef.current = parseTLEData(data)
+              drawTrail()
+            })
+            .catch(() => {
+              // Non-fatal — server positions already render without the trail.
+            })
+        }
+      }
+    }
+
+    if (wsUrl) {
+      orbit = connectOrbitStream(wsUrl, {
+        onPositions: renderWSPositions,
+        onConnect: () => {
+          usingWS = true
+          clearFallbackTimer()
+          orbit?.updateViewport(currentViewport())
+        },
+        onDisconnect: () => {
+          usingWS = false
+          gotFirstBatch = false
+          // Give the server ~3s to come back before falling back.
+          clearFallbackTimer()
+          fallbackTimer = window.setTimeout(() => {
+            ensureLocalTLEsThenStart()
+          }, 3000)
+        },
+      })
+
+      // If the server never responds, fall back after 3s.
+      fallbackTimer = window.setTimeout(() => {
+        if (!gotFirstBatch) ensureLocalTLEsThenStart()
+      }, 3000)
+
+      // Sync viewport on pan/zoom (throttled to ~5 Hz).
+      moveendHandler = () => {
+        if (!usingWS || !orbit) return
+        if (moveThrottle !== null) return
+        moveThrottle = window.setTimeout(() => {
+          moveThrottle = null
+          orbit?.updateViewport(currentViewport())
+        }, 200)
+      }
+      map.on('moveend', moveendHandler)
+    } else {
+      // No WS URL configured — local propagation only.
+      ensureLocalTLEsThenStart()
+    }
+
+    return () => {
+      clearFallbackTimer()
+      if (moveThrottle !== null) {
+        clearTimeout(moveThrottle)
+        moveThrottle = null
+      }
+      if (moveendHandler) {
+        map.off('moveend', moveendHandler)
+      }
+      if (orbit) {
+        orbit.close()
+        orbit = null
+      }
+      stopLocal()
     }
   }, [satellitesVisible, globeMode, isMapLoaded])
 
