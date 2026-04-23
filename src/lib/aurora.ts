@@ -71,8 +71,8 @@ function makeWavyBand(
   for (let i = 0; i <= N; i++) {
     const lng = -180 + (360 * i) / N
     const w = wave(lng)
-    top.push([lng, Math.min(89.9, sign * (baseHigh + w))])
-    bottom.push([lng, Math.min(89.9, sign * (baseLow + w))])
+    top.push([lng, Math.max(-89.9, Math.min(89.9, sign * (baseHigh + w)))])
+    bottom.push([lng, Math.max(-89.9, Math.min(89.9, sign * (baseLow + w)))])
   }
 
   // Build ring: bottom left→right, top right→left, close

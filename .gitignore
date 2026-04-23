@@ -1,5 +1,6 @@
 node_modules
 dist
+coverage
 *.log
 .DS_Store
 
@@ -20,13 +21,5 @@ scripts/
 
 # Project planning / context files
 CLAUDE.md
-PLAN.md
-PLAN_backend.md
-plan_new_features.md
-
-# Personal / private files
-claude_init.md
-claude_resources_do_nauki.md
-plan_dzialania.txt
-miodek_dla_natalii_do_przeczytania.md
-miodek_do_przeczytania_jako_pierwszy.txt
+other/
+plan_conjuction.md

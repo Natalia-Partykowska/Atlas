@@ -36,7 +36,7 @@ const GROUP_BY_U8: Record<number, SatGroup> = {
  *   u64 tick_epoch_ms | u64 vec_len | N × (u32 norad, f32 lng, f32 lat, u16 alt, u8 group)
  * All little-endian, no padding, fixint encoding (bincode default).
  */
-function decodeBatch(buf: ArrayBuffer): SatPosition[] {
+export function decodeBatch(buf: ArrayBuffer): SatPosition[] {
   const view = new DataView(buf)
   if (buf.byteLength < 16) return []
   // Skip tick_epoch_ms at offset 0 (not needed by client yet).
