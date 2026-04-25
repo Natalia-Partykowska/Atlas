@@ -1111,35 +1111,20 @@ export default function Map() {
       return
     }
 
-    // Local SGP4 path — same as before, kept as the fallback when the WS server
-    // is unreachable or drops the connection.
-    const startLocal = () => {
-      const sats = satelliteTLERef.current
-      if (!sats || sats.length === 0) return
-      const now = new Date()
-      satSrc.setData(buildSatelliteGeoJSON(propagateAll(sats, now)))
+    // Single source of truth for who is allowed to write to `satSrc`.
+    // Mode transitions go through `enter()`, which always tears down the
+    // current writers before arming the new ones — so two writers can never
+    // race on the same source.
+    type SatMode = 'idle' | 'connecting' | 'ws' | 'fallback'
 
-      satelliteIntervalRef.current = window.setInterval(() => {
-        const t = new Date()
-        satSrc.setData(buildSatelliteGeoJSON(propagateAll(sats, t)))
-      }, 200)
-    }
+    const wsUrl = import.meta.env.VITE_ORBIT_WS_URL as string | undefined
 
-    const ensureLocalTLEsThenStart = () => {
-      if (satelliteIntervalRef.current !== null) return // already running
-      if (satelliteTLERef.current) {
-        startLocal()
-      } else {
-        fetch('/data/satellites.json')
-          .then((r) => r.json())
-          .then((data: SatTLEEntry[]) => {
-            satelliteTLERef.current = parseTLEData(data)
-            // Only start if we're still in the "want satellites" state.
-            if (satelliteIntervalRef.current === null) startLocal()
-          })
-          .catch((err) => console.error('Satellite data fetch failed:', err))
-      }
-    }
+    let mode: SatMode = 'idle'
+    let orbit: OrbitStreamHandle | null = null
+    let fallbackTimer: number | null = null
+    let fallbackAbort: AbortController | null = null
+    let moveendHandler: (() => void) | null = null
+    let moveThrottle: number | null = null
 
     // Viewport bounds helper. On the globe projection `map.getBounds()` returns
     // a Mercator-style box that doesn't track the actually-visible hemisphere,
@@ -1158,15 +1143,6 @@ export default function Map() {
       }
     }
 
-    const wsUrl = import.meta.env.VITE_ORBIT_WS_URL as string | undefined
-
-    let orbit: OrbitStreamHandle | null = null
-    let usingWS = false
-    let gotFirstBatch = false
-    let fallbackTimer: number | null = null
-    let moveendHandler: (() => void) | null = null
-    let moveThrottle: number | null = null
-
     const clearFallbackTimer = () => {
       if (fallbackTimer !== null) {
         clearTimeout(fallbackTimer)
@@ -1181,50 +1157,111 @@ export default function Map() {
       }
     }
 
-    const renderWSPositions = (positions: SatPosition[]) => {
-      satSrc.setData(buildSatelliteGeoJSON(positions))
-      if (!gotFirstBatch) {
-        gotFirstBatch = true
-        stopLocal()
+    const abortFallbackFetch = () => {
+      if (fallbackAbort) {
+        fallbackAbort.abort()
+        fallbackAbort = null
       }
+    }
+
+    // Local SGP4 propagation — only writer for `fallback` mode.
+    const startLocal = () => {
+      const sats = satelliteTLERef.current
+      if (!sats || sats.length === 0) return
+      const paint = () => {
+        if (mode !== 'fallback') return
+        satSrc.setData(buildSatelliteGeoJSON(propagateAll(sats, new Date())))
+      }
+      paint()
+      satelliteIntervalRef.current = window.setInterval(paint, 200)
+    }
+
+    const startLocalFlow = () => {
+      if (mode !== 'fallback') return
+      if (satelliteIntervalRef.current !== null) return
+      if (satelliteTLERef.current) {
+        startLocal()
+        return
+      }
+      fallbackAbort = new AbortController()
+      fetch('/data/satellites.json', { signal: fallbackAbort.signal })
+        .then((r) => r.json())
+        .then((data: SatTLEEntry[]) => {
+          if (mode !== 'fallback') return
+          satelliteTLERef.current = parseTLEData(data)
+          startLocal()
+        })
+        .catch((err) => {
+          if ((err as Error).name === 'AbortError') return
+          console.error('Satellite data fetch failed:', err)
+        })
+    }
+
+    // Single funnel for all mode transitions. Tear down before arming.
+    const enter = (next: SatMode) => {
+      if (mode === next) return
+
+      // Exit: kill every writer/timer the previous mode could have armed.
+      // Idempotent calls — safe regardless of which mode we were in.
+      clearFallbackTimer()
+      abortFallbackFetch()
+      stopLocal()
+
+      mode = next
+
+      // Flush any stale paint so the new writer's first frame is clean.
+      satSrc.setData(EMPTY_FEATURE_COLLECTION)
+
+      switch (next) {
+        case 'idle':
+          break
+        case 'connecting':
+          // 8s budget for the WS handshake + first batch. Railway cold-starts
+          // can take several seconds; if WS is still in CONNECTING/OPEN we
+          // hold off, otherwise fall back.
+          fallbackTimer = window.setTimeout(() => {
+            if (mode !== 'connecting') return
+            if (orbit?.isLive()) return
+            enter('fallback')
+          }, 8000)
+          break
+        case 'ws':
+          // First batch will paint immediately after this returns.
+          break
+        case 'fallback':
+          startLocalFlow()
+          break
+      }
+    }
+
+    const renderWSPositions = (positions: SatPosition[]) => {
+      // Drop any stragglers that arrive after we've left the WS-eligible states.
+      if (mode === 'idle' || mode === 'fallback') return
+      if (mode !== 'ws') enter('ws')
+      satSrc.setData(buildSatelliteGeoJSON(positions))
     }
 
     if (wsUrl) {
       orbit = connectOrbitStream(wsUrl, {
         onPositions: renderWSPositions,
         onConnect: () => {
-          usingWS = true
-          clearFallbackTimer()
-          // Kill any local loop that may have started during the handshake
-          // and flush stale local paint so the first WS batch lands onto a
-          // clean source (no flicker of ~262 bundled sats under the ~17k stream).
-          stopLocal()
-          satSrc.setData(EMPTY_FEATURE_COLLECTION)
           orbit?.updateViewport(currentViewport())
         },
         onDisconnect: () => {
-          usingWS = false
-          gotFirstBatch = false
-          // Give the server ~3s to come back before falling back.
+          if (mode === 'idle') return
+          // 3s grace before falling back so brief blips don't flap us.
+          // Replaces any pending 8s/3s timer.
           clearFallbackTimer()
           fallbackTimer = window.setTimeout(() => {
-            ensureLocalTLEsThenStart()
+            if (mode === 'idle') return
+            enter('fallback')
           }, 3000)
         },
       })
 
-      // Initial connection budget: 8s. Railway cold-starts and the first WS
-      // upgrade can take several seconds; 3s was too aggressive and caused
-      // the local loop to flash before WS took over.
-      fallbackTimer = window.setTimeout(() => {
-        if (gotFirstBatch) return
-        if (orbit?.isLive()) return // WS still connecting — give it more time
-        ensureLocalTLEsThenStart()
-      }, 8000)
-
-      // Sync viewport on pan/zoom (throttled to ~5 Hz).
+      // Sync viewport on pan/zoom (throttled to ~5 Hz). Only meaningful in `ws`.
       moveendHandler = () => {
-        if (!usingWS || !orbit) return
+        if (mode !== 'ws' || !orbit) return
         if (moveThrottle !== null) return
         moveThrottle = window.setTimeout(() => {
           moveThrottle = null
@@ -1232,13 +1269,15 @@ export default function Map() {
         }, 200)
       }
       map.on('moveend', moveendHandler)
+
+      enter('connecting')
     } else {
-      // No WS URL configured — local propagation only.
-      ensureLocalTLEsThenStart()
+      // No WS URL configured — go straight to local propagation.
+      enter('fallback')
     }
 
     return () => {
-      clearFallbackTimer()
+      enter('idle')
       if (moveThrottle !== null) {
         clearTimeout(moveThrottle)
         moveThrottle = null
@@ -1250,7 +1289,6 @@ export default function Map() {
         orbit.close()
         orbit = null
       }
-      stopLocal()
     }
   }, [satellitesVisible, globeMode, isMapLoaded])
 

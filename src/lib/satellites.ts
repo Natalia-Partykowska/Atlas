@@ -44,12 +44,12 @@ export interface SatPosition {
 // ─── Group styling config ────────────────────────────────────────────────────
 
 export const SATELLITE_GROUPS = {
-  iss:      { color: '#FFD700', dotRadius: 1.2, glowRadius: 3,  opacity: 0.55 },
-  station:  { color: '#FFD700', dotRadius: 2,   glowRadius: 4,  opacity: 0.6  },
+  iss:      { color: '#FFFFFF', dotRadius: 1.2, glowRadius: 3,  opacity: 0.55 },
+  station:  { color: '#FFFFFF', dotRadius: 2,   glowRadius: 4,  opacity: 0.6  },
   starlink: { color: '#00E5FF', dotRadius: 1,   glowRadius: 2,  opacity: 0.5  },
-  gps:      { color: '#69F0AE', dotRadius: 2,   glowRadius: 4,  opacity: 0.7  },
+  gps:      { color: '#4DD0E1', dotRadius: 2,   glowRadius: 4,  opacity: 0.7  },
   geo:      { color: '#B388FF', dotRadius: 2,   glowRadius: 4,  opacity: 0.7  },
-  debris:   { color: '#FF7043', dotRadius: 1,   glowRadius: 2,  opacity: 0.45 },
+  debris:   { color: '#FF5252', dotRadius: 1,   glowRadius: 2,  opacity: 0.45 },
   active:   { color: '#82B1FF', dotRadius: 1.2, glowRadius: 3,  opacity: 0.55 },
 } as const
 
