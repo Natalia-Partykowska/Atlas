@@ -28,7 +28,6 @@ import {
   parseTLEData,
   propagateAll,
   buildSatelliteGeoJSON,
-  buildISSTrail,
   SATELLITE_GROUPS,
 } from '@/lib/satellites'
 import type { ParsedSatellite, SatTLEEntry, SatPosition } from '@/lib/satellites'
@@ -410,26 +409,6 @@ export default function Map() {
             'active', SATELLITE_GROUPS.active.opacity,
             SATELLITE_GROUPS.starlink.opacity,
           ],
-        },
-      })
-
-      // 5g. Satellites — ISS name label
-      map.addLayer({
-        id: 'satellites-label',
-        type: 'symbol',
-        source: 'satellites',
-        filter: ['==', ['get', 'group'], 'iss'],
-        layout: {
-          'text-field': ['get', 'name'],
-          'text-font': ['Open Sans Semibold'],
-          'text-size': 11,
-          'text-offset': [0, 1.5],
-          'text-anchor': 'top',
-        },
-        paint: {
-          'text-color': SATELLITE_GROUPS.iss.color,
-          'text-halo-color': 'rgba(0,0,0,0.8)',
-          'text-halo-width': 1.5,
         },
       })
 
@@ -1139,17 +1118,10 @@ export default function Map() {
       if (!sats || sats.length === 0) return
       const now = new Date()
       satSrc.setData(buildSatelliteGeoJSON(propagateAll(sats, now)))
-      trailSrc.setData(buildISSTrail(sats, now))
 
-      let trailTick = 0
       satelliteIntervalRef.current = window.setInterval(() => {
         const t = new Date()
         satSrc.setData(buildSatelliteGeoJSON(propagateAll(sats, t)))
-        trailTick++
-        if (trailTick >= 150) {
-          trailTick = 0
-          trailSrc.setData(buildISSTrail(sats, t))
-        }
       }, 200)
     }
 
@@ -1211,30 +1183,9 @@ export default function Map() {
 
     const renderWSPositions = (positions: SatPosition[]) => {
       satSrc.setData(buildSatelliteGeoJSON(positions))
-      // ISS trail still comes from local TLEs — propagate one-off on first
-      // WS batch so the gold arc is visible without keeping the 5 Hz loop alive.
       if (!gotFirstBatch) {
         gotFirstBatch = true
         stopLocal()
-        const drawTrail = () => {
-          const sats = satelliteTLERef.current
-          if (sats && sats.length > 0) {
-            trailSrc.setData(buildISSTrail(sats, new Date()))
-          }
-        }
-        if (satelliteTLERef.current) {
-          drawTrail()
-        } else {
-          fetch('/data/satellites.json')
-            .then((r) => r.json())
-            .then((data: SatTLEEntry[]) => {
-              satelliteTLERef.current = parseTLEData(data)
-              drawTrail()
-            })
-            .catch(() => {
-              // Non-fatal — server positions already render without the trail.
-            })
-        }
       }
     }
 
