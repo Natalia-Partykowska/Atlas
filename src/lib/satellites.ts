@@ -44,7 +44,7 @@ export interface SatPosition {
 // ─── Group styling config ────────────────────────────────────────────────────
 
 export const SATELLITE_GROUPS = {
-  iss:      { color: '#FFD700', dotRadius: 5,   glowRadius: 12, opacity: 1.0  },
+  iss:      { color: '#FFD700', dotRadius: 1.2, glowRadius: 3,  opacity: 0.55 },
   station:  { color: '#FFD700', dotRadius: 2,   glowRadius: 4,  opacity: 0.6  },
   starlink: { color: '#00E5FF', dotRadius: 1,   glowRadius: 2,  opacity: 0.5  },
   gps:      { color: '#69F0AE', dotRadius: 2,   glowRadius: 4,  opacity: 0.7  },
