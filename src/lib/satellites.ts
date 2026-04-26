@@ -34,6 +34,7 @@ export interface ParsedSatellite {
 }
 
 export interface SatPosition {
+  norad: number
   name: string
   group: SatGroup
   lng: number
@@ -107,6 +108,7 @@ export function propagateAll(
       if (isNaN(lng) || isNaN(lat) || isNaN(altitudeKm)) continue
 
       positions.push({
+        norad: parseInt(sat.satrec.satnum, 10) || 0,
         name: sat.name,
         group: sat.group,
         lng,

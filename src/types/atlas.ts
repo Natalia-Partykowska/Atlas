@@ -1,3 +1,5 @@
+import type { ConjunctionEvent } from '@/lib/orbitStream'
+
 export type ISO3 = string
 export type CountryDataMap = Record<ISO3, number>
 
@@ -41,6 +43,9 @@ export interface AtlasState {
   globeMode: boolean
   submarineCablesVisible: boolean
   satellitesVisible: boolean
+  conjunctionsVisible: boolean
+  conjunctionEvents: ConjunctionEvent[]
+  selectedConjunction: { noradA: number; noradB: number } | null
   terminatorVisible: boolean
   auroraVisible: boolean
   auroraKp: number
@@ -56,6 +61,9 @@ export interface AtlasState {
   setGlobeMode: (on: boolean) => void
   setSubmarineCablesVisible: (on: boolean) => void
   setSatellitesVisible: (on: boolean) => void
+  setConjunctionsVisible: (on: boolean) => void
+  setConjunctionEvents: (events: ConjunctionEvent[]) => void
+  setSelectedConjunction: (sel: { noradA: number; noradB: number } | null) => void
   setTerminatorVisible: (on: boolean) => void
   setAuroraVisible: (on: boolean) => void
   setAuroraInfo: (kp: number, label: string, dataUnavailable: boolean) => void

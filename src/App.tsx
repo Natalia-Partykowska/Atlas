@@ -3,6 +3,7 @@ import Tooltip from '@/components/overlays/Tooltip'
 import LayerSwitcher from '@/components/overlays/LayerSwitcher'
 import Legend from '@/components/overlays/Legend'
 import Toolbar from '@/components/overlays/Toolbar'
+import ConjunctionPanel from '@/components/overlays/ConjunctionPanel'
 
 export default function App() {
   return (
@@ -12,6 +13,7 @@ export default function App() {
       <Legend />
       <Tooltip />
       <Toolbar />
+      <ConjunctionPanel />
     </div>
   )
 }

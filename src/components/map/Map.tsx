@@ -32,8 +32,9 @@ import {
 } from '@/lib/satellites'
 import type { ParsedSatellite, SatTLEEntry, SatPosition } from '@/lib/satellites'
 import { SatelliteLayer } from '@/lib/satelliteLayer'
+import { ConjunctionLineLayer } from '@/lib/conjunctionLineLayer'
 import { connectOrbitStream } from '@/lib/orbitStream'
-import type { OrbitStreamHandle, ViewportBounds } from '@/lib/orbitStream'
+import type { ConjunctionEvent, OrbitStreamHandle, ViewportBounds } from '@/lib/orbitStream'
 import DistanceLabel from '@/components/overlays/DistanceLabel'
 import AntipodeLabel from '@/components/overlays/AntipodeLabel'
 import type { AntipodeInfo } from '@/components/overlays/AntipodeLabel'
@@ -91,6 +92,14 @@ export default function Map() {
   const satelliteTLERef = useRef<ParsedSatellite[] | null>(null)
   const satelliteIntervalRef = useRef<number | null>(null)
   const satLayerRef = useRef<SatelliteLayer | null>(null)
+  // Last known position per NORAD — refreshed on every position batch (WS or
+  // local fallback). Read by the conjunction line layer to find each event's
+  // current endpoints. Lives outside any effect so the latest value survives
+  // re-renders triggered by store updates.
+  // Qualify with `globalThis.Map` because this file's default export
+  // (`function Map()`) shadows the JS `Map` constructor in value position.
+  const latestPositionsByNoradRef = useRef<Map<number, SatPosition>>(new globalThis.Map())
+  const conjLineLayerRef = useRef<ConjunctionLineLayer | null>(null)
 
   const setTooltip = useAtlasStore((s) => s.setTooltip)
   const setSelectedCountry = useAtlasStore((s) => s.setSelectedCountry)
@@ -104,6 +113,11 @@ export default function Map() {
   const setGlobeMode = useAtlasStore((s) => s.setGlobeMode)
   const submarineCablesVisible = useAtlasStore((s) => s.submarineCablesVisible)
   const satellitesVisible = useAtlasStore((s) => s.satellitesVisible)
+  const conjunctionsVisible = useAtlasStore((s) => s.conjunctionsVisible)
+  const conjunctionEvents = useAtlasStore((s) => s.conjunctionEvents)
+  const selectedConjunction = useAtlasStore((s) => s.selectedConjunction)
+  const setConjunctionEvents = useAtlasStore((s) => s.setConjunctionEvents)
+  const setSelectedConjunction = useAtlasStore((s) => s.setSelectedConjunction)
   const terminatorVisible = useAtlasStore((s) => s.terminatorVisible)
   const setTerminatorVisible = useAtlasStore((s) => s.setTerminatorVisible)
   const auroraVisible = useAtlasStore((s) => s.auroraVisible)
@@ -220,6 +234,10 @@ export default function Map() {
         type: 'geojson',
         data: EMPTY_FEATURE_COLLECTION,
       })
+      map.addSource('conjunctions', {
+        type: 'geojson',
+        data: EMPTY_FEATURE_COLLECTION,
+      })
 
       // ── Add layers in render order (bottom → top) ─────────────────────────
 
@@ -331,7 +349,41 @@ export default function Map() {
         },
       })
 
-      // 5e. Satellites — 3D custom layer rendering at real altitude on globe.
+      // 5e. Conjunction TCA midpoints (red surface dots, geometry from event
+      //     so they render even before any satellite position has arrived).
+      map.addLayer({
+        id: 'conjunctions-dot',
+        type: 'circle',
+        source: 'conjunctions',
+        paint: {
+          'circle-color': '#FF3344',
+          'circle-radius': 6,
+          'circle-opacity': 0.85,
+          'circle-stroke-color': '#FFFFFF',
+          'circle-stroke-width': 1,
+          'circle-stroke-opacity': 0.6,
+        },
+        layout: { visibility: 'none' },
+      })
+      map.addLayer({
+        id: 'conjunctions-label',
+        type: 'symbol',
+        source: 'conjunctions',
+        layout: {
+          'text-field': ['get', 'label'],
+          'text-size': 11,
+          'text-offset': [0, 1.2],
+          'text-anchor': 'top',
+          visibility: 'none',
+        },
+        paint: {
+          'text-color': '#FF3344',
+          'text-halo-color': '#000000',
+          'text-halo-width': 1,
+        },
+      })
+
+      // 5f. Satellites — 3D custom layer rendering at real altitude on globe.
       //     Replaces the old `satellites-glow` + `satellites-dot` circle layers;
       //     a single WebGL draw call handles glow + crisp core via smoothstep
       //     and uses MapLibre's `projectTileFor3D` so altitude reads correctly
@@ -339,6 +391,13 @@ export default function Map() {
       const satLayer = new SatelliteLayer(map)
       satLayerRef.current = satLayer
       map.addLayer(satLayer)
+
+      // 5g. Conjunction connecting line — sibling 3D layer so the endpoints
+      //     honour Session 10's altitude rendering. Empty until both endpoints
+      //     of an event are known via `latestPositionsByNoradRef`.
+      const conjLineLayer = new ConjunctionLineLayer(map)
+      conjLineLayerRef.current = conjLineLayer
+      map.addLayer(conjLineLayer)
 
       // 5c. Terminator glow line (above borders for visibility)
       map.addLayer({
@@ -1092,13 +1151,21 @@ export default function Map() {
       }
     }
 
+    const refreshLatestPositions = (positions: SatPosition[]) => {
+      const m = latestPositionsByNoradRef.current
+      m.clear()
+      for (const p of positions) m.set(p.norad, p)
+    }
+
     // Local SGP4 propagation — only writer for `fallback` mode.
     const startLocal = () => {
       const sats = satelliteTLERef.current
       if (!sats || sats.length === 0) return
       const paint = () => {
         if (mode !== 'fallback') return
-        const packed = packSatellitePositions(propagateAll(sats, new Date()))
+        const positions = propagateAll(sats, new Date())
+        refreshLatestPositions(positions)
+        const packed = packSatellitePositions(positions)
         satLayer.setData(packed.posBuffer, packed.metaBuffer, packed.count)
       }
       paint()
@@ -1143,6 +1210,13 @@ export default function Map() {
 
       switch (next) {
         case 'idle':
+          // Server is gone (or we're tearing down). No conjunction screening
+          // without the server, so flush stale events instead of leaving a
+          // ghost panel up. Toggle stays on so the user's intent is preserved.
+          setConjunctionEvents([])
+          setSelectedConjunction(null)
+          latestPositionsByNoradRef.current.clear()
+          conjLineLayerRef.current?.clear()
           break
         case 'connecting':
           // 8s budget for the WS handshake + first batch. Railway cold-starts
@@ -1158,6 +1232,11 @@ export default function Map() {
           // First batch will paint immediately after this returns.
           break
         case 'fallback':
+          // Local fallback has no conjunction screener — drop any stale
+          // events so the panel reflects "no live data" honestly.
+          setConjunctionEvents([])
+          setSelectedConjunction(null)
+          conjLineLayerRef.current?.clear()
           startLocalFlow()
           break
       }
@@ -1167,6 +1246,7 @@ export default function Map() {
       // Drop any stragglers that arrive after we've left the WS-eligible states.
       if (mode === 'idle' || mode === 'fallback') return
       if (mode !== 'ws') enter('ws')
+      refreshLatestPositions(positions)
       const packed = packSatellitePositions(positions)
       satLayer.setData(packed.posBuffer, packed.metaBuffer, packed.count)
     }
@@ -1174,6 +1254,13 @@ export default function Map() {
     if (wsUrl) {
       orbit = connectOrbitStream(wsUrl, {
         onPositions: renderWSPositions,
+        onConjunctions: (events) => {
+          // Drop conjunction batches that arrive while we're in fallback —
+          // there's no live position data to anchor the 3D lines, and we'd
+          // mislead the user about which events are still in window.
+          if (mode === 'idle' || mode === 'fallback') return
+          setConjunctionEvents(events)
+        },
         onConnect: () => {
           orbit?.updateViewport(currentViewport())
         },
@@ -1220,7 +1307,109 @@ export default function Map() {
         orbit = null
       }
     }
-  }, [satellitesVisible, globeMode, isMapLoaded])
+  }, [satellitesVisible, globeMode, isMapLoaded, setConjunctionEvents, setSelectedConjunction])
+
+  // ─── Conjunction overlay ─────────────────────────────────────────────────
+  //
+  // Single updater. Owns every write to the `conjunctions` GeoJSON source +
+  // the 3D line layer; runs only on event/selection/toggle changes (0.1 Hz +
+  // user clicks), never on the 1 Hz position tick. Hardening rules from the
+  // post-mortem of the failed first attempt:
+  //   1. Source + layers were registered unconditionally at load — see
+  //      `map.on('load')` above. We never `addSource` at runtime here.
+  //   2. Geometry comes from `event.midLat` / `event.midLng` (server-side
+  //      precomputed). No `latestPositionsByNoradRef` lookup for the dot —
+  //      that race is what black-screened the first attempt.
+  //   3. Every coord runs through a `Number.isFinite` guard before reaching
+  //      the source. One bad record can't poison the layer.
+  //   4. Body is in a try/catch so a renderer mishap can't kill React's tree.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !isMapLoaded) return
+    try {
+      const src = map.getSource('conjunctions') as
+        | maplibregl.GeoJSONSource
+        | undefined
+      if (!src) return
+      const off = !conjunctionsVisible || !globeMode
+      if (off) {
+        src.setData(EMPTY_FEATURE_COLLECTION)
+        if (map.getLayer('conjunctions-dot'))
+          map.setLayoutProperty('conjunctions-dot', 'visibility', 'none')
+        if (map.getLayer('conjunctions-label'))
+          map.setLayoutProperty('conjunctions-label', 'visibility', 'none')
+        conjLineLayerRef.current?.clear()
+        return
+      }
+      const valid = (e: ConjunctionEvent) =>
+        Number.isFinite(e.midLat) &&
+        Number.isFinite(e.midLng) &&
+        e.midLat >= -90 &&
+        e.midLat <= 90 &&
+        e.midLng >= -180 &&
+        e.midLng <= 180
+      const events = conjunctionEvents.filter(valid)
+      if (events.length !== conjunctionEvents.length) {
+        console.warn(
+          `conjunctions: dropped ${
+            conjunctionEvents.length - events.length
+          } event(s) with invalid coordinates`,
+        )
+      }
+      const fc: FeatureCollection = {
+        type: 'FeatureCollection',
+        features: events.map((e) => ({
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [e.midLng, e.midLat] },
+          properties: {
+            label: `#${e.noradA} ↔ #${e.noradB}`,
+            noradA: e.noradA,
+            noradB: e.noradB,
+          },
+        })),
+      }
+      src.setData(fc)
+      if (map.getLayer('conjunctions-dot'))
+        map.setLayoutProperty('conjunctions-dot', 'visibility', 'visible')
+      if (map.getLayer('conjunctions-label'))
+        map.setLayoutProperty('conjunctions-label', 'visibility', 'visible')
+      const selectedKey = selectedConjunction
+        ? `${selectedConjunction.noradA}-${selectedConjunction.noradB}`
+        : null
+      conjLineLayerRef.current?.setData(
+        events,
+        latestPositionsByNoradRef.current,
+        selectedKey,
+        Date.now(),
+      )
+    } catch (e) {
+      console.error('conjunctions source update failed', e)
+    }
+  }, [conjunctionEvents, selectedConjunction, conjunctionsVisible, globeMode, isMapLoaded])
+
+  // ─── Conjunction camera fly-to on selection ──────────────────────────────
+  // Reacts only to selection changes — re-flies aren't triggered by event
+  // refreshes (every 10 s) when selection is unchanged.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !selectedConjunction) return
+    const event = useAtlasStore
+      .getState()
+      .conjunctionEvents.find(
+        (e) =>
+          (e.noradA === selectedConjunction.noradA &&
+            e.noradB === selectedConjunction.noradB) ||
+          (e.noradA === selectedConjunction.noradB &&
+            e.noradB === selectedConjunction.noradA),
+      )
+    if (!event) return
+    if (!Number.isFinite(event.midLat) || !Number.isFinite(event.midLng)) return
+    map.easeTo({
+      center: [event.midLng, event.midLat],
+      zoom: 3.5,
+      duration: 600,
+    })
+  }, [selectedConjunction])
 
   // ─── Terminator overlay ──────────────────────────────────────────────────
   useEffect(() => {
