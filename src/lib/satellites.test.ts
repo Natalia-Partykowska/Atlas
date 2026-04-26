@@ -2,11 +2,12 @@ import { describe, it, expect } from 'vitest'
 import {
   parseTLEData,
   propagateAll,
-  buildSatelliteGeoJSON,
+  packSatellitePositions,
   buildISSTrail,
   SATELLITE_GROUPS,
+  GROUP_INDEX,
 } from './satellites'
-import type { SatTLEEntry, SatPosition, ParsedSatellite } from './satellites'
+import type { SatTLEEntry, SatPosition, ParsedSatellite, SatGroup } from './satellites'
 
 // ── Real TLE fixtures (from public/data/satellites.json, epoch ~Mar 2026) ────
 //
@@ -63,13 +64,10 @@ describe('SATELLITE_GROUPS', () => {
     }
   })
 
-  it('ISS has the largest dotRadius (hero satellite)', () => {
-    const issRadius = SATELLITE_GROUPS.iss.dotRadius
-    for (const [key, cfg] of Object.entries(SATELLITE_GROUPS)) {
-      if (key !== 'iss') {
-        expect(cfg.dotRadius).toBeLessThanOrEqual(issRadius)
-      }
-    }
+  it('ISS shares the same render profile as `active` (no longer a hero)', () => {
+    expect(SATELLITE_GROUPS.iss.dotRadius).toBe(SATELLITE_GROUPS.active.dotRadius)
+    expect(SATELLITE_GROUPS.iss.glowRadius).toBe(SATELLITE_GROUPS.active.glowRadius)
+    expect(SATELLITE_GROUPS.iss.opacity).toBe(SATELLITE_GROUPS.active.opacity)
   })
 })
 
@@ -186,45 +184,109 @@ describe('propagateAll', () => {
   })
 })
 
-// ── buildSatelliteGeoJSON ─────────────────────────────────────────────────────
+// ── GROUP_INDEX ──────────────────────────────────────────────────────────────
 
-describe('buildSatelliteGeoJSON', () => {
+describe('GROUP_INDEX', () => {
+  it('every SATELLITE_GROUPS key has a unique index', () => {
+    const indices = Object.values(GROUP_INDEX)
+    expect(new Set(indices).size).toBe(indices.length)
+  })
+
+  it('indices 0..5 match the wire format (GROUP_BY_U8 in orbitStream)', () => {
+    // Wire u8: 0:iss, 1:station, 2:gps, 3:geo, 4:debris, 5:active
+    expect(GROUP_INDEX.iss).toBe(0)
+    expect(GROUP_INDEX.station).toBe(1)
+    expect(GROUP_INDEX.gps).toBe(2)
+    expect(GROUP_INDEX.geo).toBe(3)
+    expect(GROUP_INDEX.debris).toBe(4)
+    expect(GROUP_INDEX.active).toBe(5)
+  })
+
+  it('starlink (fallback-only) sits at the tail without colliding with wire indices', () => {
+    expect(GROUP_INDEX.starlink).toBe(6)
+  })
+
+  it('covers every group declared in SATELLITE_GROUPS', () => {
+    for (const key of Object.keys(SATELLITE_GROUPS)) {
+      expect(GROUP_INDEX).toHaveProperty(key)
+    }
+  })
+})
+
+// ── packSatellitePositions ────────────────────────────────────────────────────
+
+describe('packSatellitePositions', () => {
   const POSITIONS: SatPosition[] = [
     { name: 'ISS (ZARYA)', group: 'iss', lng: 45.5, lat: 30.2, altitudeKm: 408.3 },
     { name: 'STARLINK-1', group: 'active', lng: -120.1, lat: -15.7, altitudeKm: 550.0 },
   ]
 
-  it('returns a FeatureCollection', () => {
-    const fc = buildSatelliteGeoJSON(POSITIONS)
-    expect(fc.type).toBe('FeatureCollection')
+  it('returns posBuffer length = count × 3 and metaBuffer length = count', () => {
+    const packed = packSatellitePositions(POSITIONS)
+    expect(packed.count).toBe(2)
+    expect(packed.posBuffer).toHaveLength(6)
+    expect(packed.metaBuffer).toHaveLength(2)
   })
 
-  it('produces one feature per position', () => {
-    expect(buildSatelliteGeoJSON(POSITIONS).features).toHaveLength(2)
-    expect(buildSatelliteGeoJSON([]).features).toHaveLength(0)
+  it('handles an empty input', () => {
+    const packed = packSatellitePositions([])
+    expect(packed.count).toBe(0)
+    expect(packed.posBuffer).toHaveLength(0)
+    expect(packed.metaBuffer).toHaveLength(0)
   })
 
-  it('all features have Point geometry', () => {
-    for (const f of buildSatelliteGeoJSON(POSITIONS).features) {
-      expect(f.geometry.type).toBe('Point')
-    }
+  it('(lng=0, lat=0) maps to mercator (0.5, 0.5)', () => {
+    const packed = packSatellitePositions([
+      { name: 'origin', group: 'iss', lng: 0, lat: 0, altitudeKm: 0 },
+    ])
+    expect(packed.posBuffer[0]).toBeCloseTo(0.5, 5)
+    expect(packed.posBuffer[1]).toBeCloseTo(0.5, 5)
   })
 
-  it('coordinates are [lng, lat]', () => {
-    const [f] = buildSatelliteGeoJSON([POSITIONS[0]]).features
-    expect(f.geometry.coordinates[0]).toBeCloseTo(45.5, 3)
-    expect(f.geometry.coordinates[1]).toBeCloseTo(30.2, 3)
+  it('(lng=180, lat=0) maps to mercator x=1', () => {
+    const packed = packSatellitePositions([
+      { name: 'antimeridian', group: 'iss', lng: 180, lat: 0, altitudeKm: 0 },
+    ])
+    expect(packed.posBuffer[0]).toBeCloseTo(1.0, 5)
+    expect(packed.posBuffer[1]).toBeCloseTo(0.5, 5)
   })
 
-  it('altitude is rounded to the nearest km in properties', () => {
-    const [f] = buildSatelliteGeoJSON([POSITIONS[0]]).features
-    expect(f.properties?.altitude_km).toBe(408) // Math.round(408.3)
+  it('(lng=-180, lat=0) maps to mercator x=0', () => {
+    const packed = packSatellitePositions([
+      { name: 'antimeridian-w', group: 'iss', lng: -180, lat: 0, altitudeKm: 0 },
+    ])
+    expect(packed.posBuffer[0]).toBeCloseTo(0.0, 5)
   })
 
-  it('name and group are stored in properties', () => {
-    const [f] = buildSatelliteGeoJSON([POSITIONS[0]]).features
-    expect(f.properties?.name).toBe('ISS (ZARYA)')
-    expect(f.properties?.group).toBe('iss')
+  it('mercator y monotonically decreases as latitude increases (north → smaller y)', () => {
+    const packed = packSatellitePositions([
+      { name: 'south', group: 'iss', lng: 0, lat: -45, altitudeKm: 0 },
+      { name: 'eq',    group: 'iss', lng: 0, lat: 0,   altitudeKm: 0 },
+      { name: 'north', group: 'iss', lng: 0, lat: 45,  altitudeKm: 0 },
+    ])
+    const ySouth = packed.posBuffer[1]
+    const yEq = packed.posBuffer[1 + 3]
+    const yNorth = packed.posBuffer[1 + 6]
+    expect(ySouth).toBeGreaterThan(yEq)
+    expect(yEq).toBeGreaterThan(yNorth)
+  })
+
+  it('altitude is converted from km to meters', () => {
+    const packed = packSatellitePositions([POSITIONS[0]])
+    expect(packed.posBuffer[2]).toBeCloseTo(408_300, 1) // 408.3 km × 1000
+  })
+
+  it('group byte matches GROUP_INDEX', () => {
+    const packed = packSatellitePositions(POSITIONS)
+    expect(packed.metaBuffer[0]).toBe(GROUP_INDEX.iss)
+    expect(packed.metaBuffer[1]).toBe(GROUP_INDEX.active)
+  })
+
+  it('falls back to active for an unknown group string', () => {
+    const packed = packSatellitePositions([
+      { name: 'odd', group: 'unknown' as SatGroup, lng: 0, lat: 0, altitudeKm: 0 },
+    ])
+    expect(packed.metaBuffer[0]).toBe(GROUP_INDEX.active)
   })
 })
 

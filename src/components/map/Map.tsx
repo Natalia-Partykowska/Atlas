@@ -27,10 +27,11 @@ import { computeTerminator, computeTerminatorCurve } from '@/lib/solarTerminator
 import {
   parseTLEData,
   propagateAll,
-  buildSatelliteGeoJSON,
+  packSatellitePositions,
   SATELLITE_GROUPS,
 } from '@/lib/satellites'
 import type { ParsedSatellite, SatTLEEntry, SatPosition } from '@/lib/satellites'
+import { SatelliteLayer } from '@/lib/satelliteLayer'
 import { connectOrbitStream } from '@/lib/orbitStream'
 import type { OrbitStreamHandle, ViewportBounds } from '@/lib/orbitStream'
 import DistanceLabel from '@/components/overlays/DistanceLabel'
@@ -89,6 +90,7 @@ export default function Map() {
   // Satellite refs
   const satelliteTLERef = useRef<ParsedSatellite[] | null>(null)
   const satelliteIntervalRef = useRef<number | null>(null)
+  const satLayerRef = useRef<SatelliteLayer | null>(null)
 
   const setTooltip = useAtlasStore((s) => s.setTooltip)
   const setSelectedCountry = useAtlasStore((s) => s.setSelectedCountry)
@@ -214,10 +216,6 @@ export default function Map() {
         type: 'geojson',
         data: EMPTY_FEATURE_COLLECTION,
       })
-      map.addSource('satellites', {
-        type: 'geojson',
-        data: EMPTY_FEATURE_COLLECTION,
-      })
       map.addSource('satellite-trail', {
         type: 'geojson',
         data: EMPTY_FEATURE_COLLECTION,
@@ -333,84 +331,14 @@ export default function Map() {
         },
       })
 
-      // 5e. Satellites — outer glow
-      map.addLayer({
-        id: 'satellites-glow',
-        type: 'circle',
-        source: 'satellites',
-        paint: {
-          'circle-radius': [
-            'match', ['get', 'group'],
-            'iss', SATELLITE_GROUPS.iss.glowRadius,
-            'gps', SATELLITE_GROUPS.gps.glowRadius,
-            'station', SATELLITE_GROUPS.station.glowRadius,
-            'geo', SATELLITE_GROUPS.geo.glowRadius,
-            'debris', SATELLITE_GROUPS.debris.glowRadius,
-            'active', SATELLITE_GROUPS.active.glowRadius,
-            SATELLITE_GROUPS.starlink.glowRadius,
-          ],
-          'circle-color': [
-            'match', ['get', 'group'],
-            'iss', SATELLITE_GROUPS.iss.color,
-            'gps', SATELLITE_GROUPS.gps.color,
-            'station', SATELLITE_GROUPS.station.color,
-            'geo', SATELLITE_GROUPS.geo.color,
-            'debris', SATELLITE_GROUPS.debris.color,
-            'active', SATELLITE_GROUPS.active.color,
-            SATELLITE_GROUPS.starlink.color,
-          ],
-          'circle-blur': 1,
-          'circle-opacity': [
-            'match', ['get', 'group'],
-            'iss', 0.4,
-            'gps', 0.25,
-            'station', 0.25,
-            'geo', 0.25,
-            'debris', 0.15,
-            'active', 0.2,
-            0.2,
-          ],
-        },
-      })
-
-      // 5f. Satellites — inner crisp dot
-      map.addLayer({
-        id: 'satellites-dot',
-        type: 'circle',
-        source: 'satellites',
-        paint: {
-          'circle-radius': [
-            'match', ['get', 'group'],
-            'iss', SATELLITE_GROUPS.iss.dotRadius,
-            'gps', SATELLITE_GROUPS.gps.dotRadius,
-            'station', SATELLITE_GROUPS.station.dotRadius,
-            'geo', SATELLITE_GROUPS.geo.dotRadius,
-            'debris', SATELLITE_GROUPS.debris.dotRadius,
-            'active', SATELLITE_GROUPS.active.dotRadius,
-            SATELLITE_GROUPS.starlink.dotRadius,
-          ],
-          'circle-color': [
-            'match', ['get', 'group'],
-            'iss', SATELLITE_GROUPS.iss.color,
-            'gps', SATELLITE_GROUPS.gps.color,
-            'station', SATELLITE_GROUPS.station.color,
-            'geo', SATELLITE_GROUPS.geo.color,
-            'debris', SATELLITE_GROUPS.debris.color,
-            'active', SATELLITE_GROUPS.active.color,
-            SATELLITE_GROUPS.starlink.color,
-          ],
-          'circle-opacity': [
-            'match', ['get', 'group'],
-            'iss', SATELLITE_GROUPS.iss.opacity,
-            'gps', SATELLITE_GROUPS.gps.opacity,
-            'station', SATELLITE_GROUPS.station.opacity,
-            'geo', SATELLITE_GROUPS.geo.opacity,
-            'debris', SATELLITE_GROUPS.debris.opacity,
-            'active', SATELLITE_GROUPS.active.opacity,
-            SATELLITE_GROUPS.starlink.opacity,
-          ],
-        },
-      })
+      // 5e. Satellites — 3D custom layer rendering at real altitude on globe.
+      //     Replaces the old `satellites-glow` + `satellites-dot` circle layers;
+      //     a single WebGL draw call handles glow + crisp core via smoothstep
+      //     and uses MapLibre's `projectTileFor3D` so altitude reads correctly
+      //     in globe projection.
+      const satLayer = new SatelliteLayer(map)
+      satLayerRef.current = satLayer
+      map.addLayer(satLayer)
 
       // 5c. Terminator glow line (above borders for visibility)
       map.addLayer({
@@ -1097,12 +1025,12 @@ export default function Map() {
     const map = mapRef.current
     if (!map || !isMapLoaded) return
 
-    const satSrc = map.getSource('satellites') as maplibregl.GeoJSONSource | undefined
     const trailSrc = map.getSource('satellite-trail') as maplibregl.GeoJSONSource | undefined
-    if (!satSrc || !trailSrc) return
+    const satLayer = satLayerRef.current
+    if (!trailSrc || !satLayer) return
 
     if (!satellitesVisible || !globeMode) {
-      satSrc.setData(EMPTY_FEATURE_COLLECTION)
+      satLayer.clear()
       trailSrc.setData(EMPTY_FEATURE_COLLECTION)
       if (satelliteIntervalRef.current !== null) {
         clearInterval(satelliteIntervalRef.current)
@@ -1111,7 +1039,7 @@ export default function Map() {
       return
     }
 
-    // Single source of truth for who is allowed to write to `satSrc`.
+    // Single source of truth for who is allowed to write to `satLayer`.
     // Mode transitions go through `enter()`, which always tears down the
     // current writers before arming the new ones — so two writers can never
     // race on the same source.
@@ -1170,7 +1098,8 @@ export default function Map() {
       if (!sats || sats.length === 0) return
       const paint = () => {
         if (mode !== 'fallback') return
-        satSrc.setData(buildSatelliteGeoJSON(propagateAll(sats, new Date())))
+        const packed = packSatellitePositions(propagateAll(sats, new Date()))
+        satLayer.setData(packed.posBuffer, packed.metaBuffer, packed.count)
       }
       paint()
       satelliteIntervalRef.current = window.setInterval(paint, 200)
@@ -1210,7 +1139,7 @@ export default function Map() {
       mode = next
 
       // Flush any stale paint so the new writer's first frame is clean.
-      satSrc.setData(EMPTY_FEATURE_COLLECTION)
+      satLayer.clear()
 
       switch (next) {
         case 'idle':
@@ -1238,7 +1167,8 @@ export default function Map() {
       // Drop any stragglers that arrive after we've left the WS-eligible states.
       if (mode === 'idle' || mode === 'fallback') return
       if (mode !== 'ws') enter('ws')
-      satSrc.setData(buildSatelliteGeoJSON(positions))
+      const packed = packSatellitePositions(positions)
+      satLayer.setData(packed.posBuffer, packed.metaBuffer, packed.count)
     }
 
     if (wsUrl) {
