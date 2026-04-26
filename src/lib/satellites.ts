@@ -7,7 +7,7 @@ import {
   degreesLat,
 } from 'satellite.js'
 import type { SatRec } from 'satellite.js'
-import type { FeatureCollection, Feature, Point, LineString } from 'geojson'
+import type { FeatureCollection, Feature, LineString } from 'geojson'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -52,6 +52,18 @@ export const SATELLITE_GROUPS = {
   debris:   { color: '#FF5252', dotRadius: 1,   glowRadius: 2,  opacity: 0.45 },
   active:   { color: '#82B1FF', dotRadius: 1.2, glowRadius: 3,  opacity: 0.55 },
 } as const
+
+// Indices 0..5 must match GROUP_BY_U8 in orbitStream.ts (the wire format).
+// `starlink` only appears in the bundled fallback JSON, so it tails at index 6.
+export const GROUP_INDEX: Record<SatGroup, number> = {
+  iss: 0,
+  station: 1,
+  gps: 2,
+  geo: 3,
+  debris: 4,
+  active: 5,
+  starlink: 6,
+}
 
 // ─── Parsing ─────────────────────────────────────────────────────────────────
 
@@ -109,27 +121,39 @@ export function propagateAll(
   return positions
 }
 
-// ─── GeoJSON builders ────────────────────────────────────────────────────────
+// ─── Renderer packer ─────────────────────────────────────────────────────────
 
-export function buildSatelliteGeoJSON(
-  positions: SatPosition[],
-): FeatureCollection<Point> {
-  return {
-    type: 'FeatureCollection',
-    features: positions.map((pos) => ({
-      type: 'Feature',
-      properties: {
-        name: pos.name,
-        group: pos.group,
-        altitude_km: Math.round(pos.altitudeKm),
-      },
-      geometry: {
-        type: 'Point',
-        coordinates: [pos.lng, pos.lat],
-      },
-    })),
-  }
+export interface PackedSatellites {
+  // 3 floats per vertex: [mercX, mercY, altitudeMeters]
+  posBuffer: Float32Array
+  // 1 byte per vertex: group index (matches GROUP_INDEX)
+  metaBuffer: Uint8Array
+  count: number
 }
+
+/**
+ * Pack positions into typed arrays for the SatelliteLayer custom WebGL layer.
+ * Mercator x/y math matches `MercatorCoordinate.fromLngLat`, expanded inline
+ * to avoid pulling in maplibregl per vertex at 5 Hz × ~17k satellites.
+ */
+export function packSatellitePositions(positions: SatPosition[]): PackedSatellites {
+  const count = positions.length
+  const posBuffer = new Float32Array(count * 3)
+  const metaBuffer = new Uint8Array(count)
+  for (let i = 0; i < count; i++) {
+    const p = positions[i]
+    const x = (p.lng + 180) / 360
+    const sinLat = Math.sin((p.lat * Math.PI) / 180)
+    const y = 0.5 - (0.25 * Math.log((1 + sinLat) / (1 - sinLat))) / Math.PI
+    posBuffer[i * 3 + 0] = x
+    posBuffer[i * 3 + 1] = y
+    posBuffer[i * 3 + 2] = p.altitudeKm * 1000
+    metaBuffer[i] = GROUP_INDEX[p.group] ?? GROUP_INDEX.active
+  }
+  return { posBuffer, metaBuffer, count }
+}
+
+// ─── GeoJSON builders ────────────────────────────────────────────────────────
 
 export function buildISSTrail(
   satellites: ParsedSatellite[],
