@@ -6,7 +6,7 @@ import type {
 import { GROUP_INDEX, SATELLITE_GROUPS } from './satellites'
 import type { SatGroup } from './satellites'
 
-const ALTITUDE_SCALE = 3.0
+const ALTITUDE_SCALE = 1.0
 const INITIAL_CAPACITY = 32_768
 const POS_FLOATS_PER_VERTEX = 3 // mercX, mercY, altMeters
 const POS_BYTES_PER_VERTEX = POS_FLOATS_PER_VERTEX * 4
