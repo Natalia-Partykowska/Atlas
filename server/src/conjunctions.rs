@@ -385,6 +385,9 @@ mod tests {
             epoch: elements.datetime.and_utc(),
             perigee_km,
             apogee_km,
+            line1: String::new(),
+            line2: String::new(),
+            intl_designator: String::new(),
         }
     }
 
@@ -451,6 +454,9 @@ mod tests {
             epoch: geo_elements.datetime.and_utc(),
             perigee_km: peri,
             apogee_km: apo,
+            line1: String::new(),
+            line2: String::new(),
+            intl_designator: String::new(),
         };
 
         let catalog = Catalog {
