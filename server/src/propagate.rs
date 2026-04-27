@@ -12,12 +12,46 @@ pub struct Position {
     pub group: Group,
 }
 
+/// TEME-frame position (km) and velocity (km/s) at a sample instant.
+/// Used by the conjunction screener — relative position is rotation-invariant,
+/// so working in TEME avoids per-sample sidereal math.
+#[derive(Debug, Clone, Copy)]
+pub struct StateVector {
+    pub r_teme: [f64; 3],
+    pub v_teme: [f64; 3],
+}
+
 pub fn propagate_all(catalog: &Catalog, at: DateTime<Utc>) -> Vec<Position> {
     catalog
         .entries
         .par_iter()
         .filter_map(|e| propagate_one(e, at))
         .collect()
+}
+
+/// Propagate every catalog entry to `at`, returning TEME state vectors.
+/// `None` slot at index `k` means SGP4 failed for `entries[k]` at this time —
+/// the screener treats those entries as non-live for the tick.
+pub fn propagate_state_at(entries: &[CatalogEntry], at: DateTime<Utc>) -> Vec<Option<StateVector>> {
+    entries
+        .par_iter()
+        .map(|e| state_at_one(e, at))
+        .collect()
+}
+
+fn state_at_one(entry: &CatalogEntry, at: DateTime<Utc>) -> Option<StateVector> {
+    let dt_secs = (at - entry.epoch).num_milliseconds() as f64 / 1000.0;
+    let minutes = sgp4::MinutesSinceEpoch(dt_secs / 60.0);
+    let prediction = entry.constants.propagate(minutes).ok()?;
+    let r = prediction.position;
+    let v = prediction.velocity;
+    if !r.iter().chain(v.iter()).all(|x| x.is_finite()) {
+        return None;
+    }
+    Some(StateVector {
+        r_teme: r,
+        v_teme: v,
+    })
 }
 
 fn propagate_one(entry: &CatalogEntry, at: DateTime<Utc>) -> Option<Position> {
@@ -49,7 +83,7 @@ fn propagate_one(entry: &CatalogEntry, at: DateTime<Utc>) -> Option<Position> {
 }
 
 /// Greenwich Mean Sidereal Time (radians) using IAU 1982.
-fn gmst_rad(at: DateTime<Utc>) -> f64 {
+pub(crate) fn gmst_rad(at: DateTime<Utc>) -> f64 {
     let jd = julian_date(at);
     let t = (jd - 2_451_545.0) / 36_525.0;
 
@@ -82,7 +116,7 @@ fn julian_date(at: DateTime<Utc>) -> f64 {
         + day_fraction
 }
 
-fn teme_to_ecef(teme: [f64; 3], gmst: f64) -> (f64, f64, f64) {
+pub(crate) fn teme_to_ecef(teme: [f64; 3], gmst: f64) -> (f64, f64, f64) {
     let (s, c) = gmst.sin_cos();
     let x = c * teme[0] + s * teme[1];
     let y = -s * teme[0] + c * teme[1];
@@ -92,7 +126,7 @@ fn teme_to_ecef(teme: [f64; 3], gmst: f64) -> (f64, f64, f64) {
 
 /// ECEF (km) → geodetic lat/lng (deg) and altitude (km) on WGS84.
 /// Closed-form Bowring, sufficient accuracy for visualization.
-fn ecef_to_geodetic(x: f64, y: f64, z: f64) -> (f64, f64, f64) {
+pub(crate) fn ecef_to_geodetic(x: f64, y: f64, z: f64) -> (f64, f64, f64) {
     const A: f64 = 6378.137; // equatorial radius, km
     const F: f64 = 1.0 / 298.257_223_563;
     const B: f64 = A * (1.0 - F);

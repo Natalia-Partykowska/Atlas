@@ -39,6 +39,8 @@ pub struct CatalogEntry {
     pub group: Group,
     pub constants: sgp4::Constants,
     pub epoch: DateTime<Utc>,
+    pub perigee_km: f32,
+    pub apogee_km: f32,
 }
 
 pub struct Catalog {
@@ -125,7 +127,12 @@ fn build_entry(raw: &RawEntry, group: Group) -> Result<CatalogEntry> {
 
     let norad_id = elements.norad_id;
     let epoch = elements.datetime.and_utc();
+    let mean_motion_rev_per_day = elements.mean_motion;
+    let eccentricity = elements.eccentricity;
     let constants = sgp4::Constants::from_elements(&elements).context("sgp4 constants")?;
+
+    let (perigee_km, apogee_km) = compute_apsides(mean_motion_rev_per_day, eccentricity)
+        .context("nonsensical apsides")?;
 
     Ok(CatalogEntry {
         norad_id,
@@ -133,7 +140,35 @@ fn build_entry(raw: &RawEntry, group: Group) -> Result<CatalogEntry> {
         group,
         constants,
         epoch,
+        perigee_km,
+        apogee_km,
     })
+}
+
+/// Compute perigee/apogee altitudes (km) from TLE mean motion (rev/day) and
+/// eccentricity. Used by the conjunction-screener apsides pre-filter.
+///
+/// Returns `None` for non-finite or absurd values (decayed / hyperbolic / bad TLE).
+pub(crate) fn compute_apsides(mean_motion_rev_per_day: f64, eccentricity: f64) -> Option<(f32, f32)> {
+    const MU_EARTH: f64 = 398_600.4418; // km^3 / s^2
+    const R_EARTH: f64 = 6378.137; // km
+
+    let n_rad_per_sec = mean_motion_rev_per_day * std::f64::consts::TAU / 86_400.0;
+    if !n_rad_per_sec.is_finite() || n_rad_per_sec <= 0.0 {
+        return None;
+    }
+    if !eccentricity.is_finite() || !(0.0..1.0).contains(&eccentricity) {
+        return None;
+    }
+
+    let a_km = (MU_EARTH / n_rad_per_sec.powi(2)).powf(1.0 / 3.0);
+    let perigee = (a_km * (1.0 - eccentricity) - R_EARTH) as f32;
+    let apogee = (a_km * (1.0 + eccentricity) - R_EARTH) as f32;
+
+    if !perigee.is_finite() || !apogee.is_finite() || perigee < -200.0 || apogee > 1_000_000.0 {
+        return None;
+    }
+    Some((perigee, apogee))
 }
 
 /// Spawn a task that reloads the catalog every day at ~04:00 UTC and swaps it
@@ -172,4 +207,79 @@ fn seconds_until_next_0400_utc() -> u64 {
         today_0400 + Duration::days(1)
     };
     (target - now).num_seconds().max(0) as u64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn iss_apsides_match_real_orbit() {
+        // ISS: ~15.5 rev/day, near-circular ~412 km altitude.
+        let (peri, apo) = compute_apsides(15.5, 0.0001).expect("ISS is a valid orbit");
+        assert!((peri - apo).abs() < 5.0, "ISS is near-circular: peri={peri}, apo={apo}");
+        assert!(
+            (380.0..=440.0).contains(&peri),
+            "ISS perigee in 380..440 km, got {peri}"
+        );
+    }
+
+    #[test]
+    fn geo_apsides_match_real_orbit() {
+        // GEO: ~1.0027 rev/day, eccentricity ~0.
+        let (peri, apo) = compute_apsides(1.0027, 0.0).expect("GEO is a valid orbit");
+        assert!(
+            (35_700.0..=35_900.0).contains(&peri),
+            "GEO peri ~35786 km, got {peri}"
+        );
+        assert!(
+            (peri - apo).abs() < 1.0,
+            "GEO is circular: peri={peri}, apo={apo}"
+        );
+    }
+
+    #[test]
+    fn molniya_apsides_match_real_orbit() {
+        // Molniya: 12-hour orbit (~2 rev/day), e ~0.74.
+        let (peri, apo) = compute_apsides(2.0, 0.74).expect("Molniya is a valid orbit");
+        assert!(
+            (300.0..=900.0).contains(&peri),
+            "Molniya peri ~600 km, got {peri}"
+        );
+        assert!(
+            (39_000.0..=41_000.0).contains(&apo),
+            "Molniya apo ~40000 km, got {apo}"
+        );
+    }
+
+    #[test]
+    fn leo_geo_shells_do_not_overlap() {
+        // LEO and GEO shells must be far apart — guards the apsides pre-filter.
+        let (leo_peri, leo_apo) = compute_apsides(15.5, 0.0001).unwrap();
+        let (geo_peri, geo_apo) = compute_apsides(1.0027, 0.0).unwrap();
+        let peri_gap = (leo_peri - geo_peri).abs();
+        let apo_gap = (leo_apo - geo_apo).abs();
+        assert!(
+            peri_gap > 30_000.0,
+            "LEO/GEO perigee shells must be >30 000 km apart, got {peri_gap}"
+        );
+        assert!(
+            apo_gap > 30_000.0,
+            "LEO/GEO apogee shells must be >30 000 km apart, got {apo_gap}"
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_inputs() {
+        assert!(compute_apsides(0.0, 0.0).is_none(), "zero mean motion");
+        assert!(compute_apsides(-1.0, 0.0).is_none(), "negative mean motion");
+        assert!(
+            compute_apsides(15.5, 1.5).is_none(),
+            "hyperbolic eccentricity"
+        );
+        assert!(
+            compute_apsides(f64::NAN, 0.0).is_none(),
+            "NaN mean motion"
+        );
+    }
 }

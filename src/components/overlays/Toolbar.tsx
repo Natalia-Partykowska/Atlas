@@ -44,6 +44,8 @@ export default function Toolbar() {
   const setSubmarineCablesVisible = useAtlasStore((s) => s.setSubmarineCablesVisible)
   const satellitesVisible = useAtlasStore((s) => s.satellitesVisible)
   const setSatellitesVisible = useAtlasStore((s) => s.setSatellitesVisible)
+  const conjunctionsVisible = useAtlasStore((s) => s.conjunctionsVisible)
+  const setConjunctionsVisible = useAtlasStore((s) => s.setConjunctionsVisible)
   const setTerminatorVisible = useAtlasStore((s) => s.setTerminatorVisible)
   const setAuroraVisible = useAtlasStore((s) => s.setAuroraVisible)
   const auroraKp = useAtlasStore((s) => s.auroraKp)
@@ -95,6 +97,14 @@ export default function Toolbar() {
               onClick={() => setSatellitesVisible(!satellitesVisible)}
               title="Show ~250 real-time satellites (ISS, Starlink, GPS)"
             />
+            {satellitesVisible && (
+              <ToolBtn
+                label="Conjunctions"
+                active={conjunctionsVisible}
+                onClick={() => setConjunctionsVisible(!conjunctionsVisible)}
+                title="Show predicted close-approach events between satellites"
+              />
+            )}
           </div>
         </>
       )}

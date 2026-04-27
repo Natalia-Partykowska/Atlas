@@ -1,3 +1,5 @@
+import type { ConjunctionEvent } from '@/lib/orbitStream'
+
 export type ISO3 = string
 export type CountryDataMap = Record<ISO3, number>
 
@@ -41,6 +43,13 @@ export interface AtlasState {
   globeMode: boolean
   submarineCablesVisible: boolean
   satellitesVisible: boolean
+  conjunctionsVisible: boolean
+  conjunctionEvents: ConjunctionEvent[]
+  selectedConjunction: { noradA: number; noradB: number } | null
+  // Distinguishes "loading" (drawer open, awaiting first 0.1 Hz batch) from
+  // "really empty" (server reported zero events). Goes false when the user
+  // toggles the drawer on; goes true when any event batch arrives.
+  conjunctionsReceivedFirstBatch: boolean
   terminatorVisible: boolean
   auroraVisible: boolean
   auroraKp: number
@@ -56,6 +65,9 @@ export interface AtlasState {
   setGlobeMode: (on: boolean) => void
   setSubmarineCablesVisible: (on: boolean) => void
   setSatellitesVisible: (on: boolean) => void
+  setConjunctionsVisible: (on: boolean) => void
+  setConjunctionEvents: (events: ConjunctionEvent[]) => void
+  setSelectedConjunction: (sel: { noradA: number; noradB: number } | null) => void
   setTerminatorVisible: (on: boolean) => void
   setAuroraVisible: (on: boolean) => void
   setAuroraInfo: (kp: number, label: string, dataUnavailable: boolean) => void

@@ -12,13 +12,14 @@ use tracing::info;
 mod catalog;
 mod celestrak;
 mod config;
+mod conjunctions;
 mod propagate;
 mod protocol;
 mod viewport;
 mod ws;
 
 use catalog::SharedCatalog;
-use ws::StreamState;
+use ws::{ScreenerStats, StreamState};
 
 #[derive(Serialize)]
 struct HealthResponse {
@@ -28,6 +29,9 @@ struct HealthResponse {
     catalog_size: usize,
     catalog_loaded_at: String,
     connections: usize,
+    screener_last_elapsed_ms: u64,
+    screener_last_event_count: u64,
+    screener_last_generated_epoch_ms: u64,
 }
 
 async fn health(State(state): State<StreamState>) -> (StatusCode, Json<HealthResponse>) {
@@ -41,6 +45,12 @@ async fn health(State(state): State<StreamState>) -> (StatusCode, Json<HealthRes
             catalog_size: cat.len(),
             catalog_loaded_at: cat.loaded_at.to_rfc3339(),
             connections: state.connections.load(Ordering::Relaxed),
+            screener_last_elapsed_ms: state.screener.last_elapsed_ms.load(Ordering::Relaxed),
+            screener_last_event_count: state.screener.last_event_count.load(Ordering::Relaxed),
+            screener_last_generated_epoch_ms: state
+                .screener
+                .last_generated_epoch_ms
+                .load(Ordering::Relaxed),
         }),
     )
 }
@@ -78,10 +88,14 @@ async fn main() {
     catalog::spawn_daily_refresh(shared.clone());
 
     let (tx, connections) = ws::spawn_broadcast_tick(shared.clone());
+    let screener = ScreenerStats::new();
+    let conj_tx = ws::spawn_conjunction_tick(shared.clone(), connections.clone(), screener.clone());
     let state = StreamState {
         catalog: shared.clone(),
         tx,
+        conj_tx,
         connections,
+        screener,
     };
 
     let cors = CorsLayer::new()
