@@ -217,6 +217,7 @@ async fn handle_socket(socket: WebSocket, state: StreamState) {
                             group_b: e.group_b.as_u8(),
                             mid_lat: e.mid_lat_deg,
                             mid_lng: e.mid_lng_deg,
+                            mid_alt_km: e.mid_alt_km,
                         })
                         .collect();
                     let batch = ConjunctionBatchMsg {

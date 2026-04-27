@@ -46,6 +46,10 @@ export interface AtlasState {
   conjunctionsVisible: boolean
   conjunctionEvents: ConjunctionEvent[]
   selectedConjunction: { noradA: number; noradB: number } | null
+  // Distinguishes "loading" (drawer open, awaiting first 0.1 Hz batch) from
+  // "really empty" (server reported zero events). Goes false when the user
+  // toggles the drawer on; goes true when any event batch arrives.
+  conjunctionsReceivedFirstBatch: boolean
   terminatorVisible: boolean
   auroraVisible: boolean
   auroraKp: number

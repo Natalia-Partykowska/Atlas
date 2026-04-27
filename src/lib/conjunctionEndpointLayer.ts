@@ -5,16 +5,12 @@ import type {
 } from 'maplibre-gl'
 import type { ConjunctionEvent } from './orbitStream'
 import type { SatPosition } from './satellites'
-import { interpolateGreatCircle } from './greatCircle'
 
 const ALTITUDE_SCALE = 1.0
 const FLOATS_PER_VERTEX = 3 // mercX, mercY, altMeters
 const BYTES_PER_VERTEX = FLOATS_PER_VERTEX * 4
-// Tessellate the connecting line into a great-circle arc so distant pairs
-// curve around the Earth instead of cutting a chord through it. 63 segments
-// → 64 vertices is plenty for a smooth arc at any zoom we allow.
-const SEGMENTS = 63
-const VERTEX_CAPACITY = SEGMENTS + 1
+const VERTEX_CAPACITY = 2 // exactly two endpoints: A and B
+const RING_RADIUS_PX = 9 // generous so the halo reads against the satellite swarm
 
 const ATTRIB_POS = 0
 const ATTRIB_ALT = 1
@@ -29,9 +25,12 @@ in vec2 a_pos_merc;
 in float a_alt_m;
 
 uniform float u_altitude_scale;
+uniform float u_dot_radius;
+uniform float u_pixel_ratio;
 
 void main() {
     gl_Position = projectTileFor3D(a_pos_merc, a_alt_m * u_altitude_scale);
+    gl_PointSize = u_dot_radius * 2.5 * u_pixel_ratio;
 }
 `
 }
@@ -42,9 +41,21 @@ precision mediump float;
 out vec4 fragColor;
 
 void main() {
-    // Bright red, fully opaque — selected pair only, so no time-fade or
-    // selection-emphasis branching. The line "is" the focus by definition.
-    fragColor = vec4(1.0, 0.20, 0.27, 1.0);
+    // Translucent red halo ring — sits around the live satellite dot drawn
+    // by the satellite layer, so the user can pick the selected pair out of
+    // the swarm. The ring is hollow: the satellite's own colour shows through
+    // the centre.
+    vec2 d = gl_PointCoord - vec2(0.5);
+    float r = length(d) * 2.0;
+    if (r > 1.0) discard;
+
+    // Inner edge (rises) × outer edge (falls) → a ring at r ≈ 0.65–0.90.
+    float inner = smoothstep(0.55, 0.65, r);
+    float outer = 1.0 - smoothstep(0.88, 0.96, r);
+    float ring = inner * outer;
+    if (ring < 0.02) discard;
+
+    fragColor = vec4(1.0, 0.30, 0.35, ring * 0.95);
 }
 `
 
@@ -58,7 +69,7 @@ function compileShader(
   gl.shaderSource(sh, src)
   gl.compileShader(sh)
   if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
-    console.error('[ConjunctionLineLayer] shader compile failed:', gl.getShaderInfoLog(sh))
+    console.error('[ConjunctionEndpointLayer] shader compile failed:', gl.getShaderInfoLog(sh))
     console.error(src)
     gl.deleteShader(sh)
     return null
@@ -74,18 +85,14 @@ function lngLatToMerc(lng: number, lat: number): [number, number] {
 }
 
 /**
- * 3D line layer that draws a single red segment between the two satellites of
- * the *currently selected* conjunction event. Endpoints are read from the
- * satellite stream's per-NORAD position cache, so the line tracks the live
- * orbital motion at 1 Hz.
- *
- * If either endpoint is unknown (no position batch yet for that NORAD), the
- * line is suppressed but the midpoint dot (a sibling layer) still renders —
- * the dot is anchored to event-embedded coords and never depends on a position
- * lookup.
+ * Halo-ring layer that marks the *current* positions of the two satellites
+ * in the selected conjunction pair. Endpoints come from the per-NORAD live
+ * position cache (refreshed each 1 Hz position batch); if either NORAD
+ * hasn't been seen yet the layer renders nothing for that frame and waits
+ * for the next batch.
  */
-export class ConjunctionLineLayer implements CustomLayerInterface {
-  readonly id = 'conjunctions-3d-line'
+export class ConjunctionEndpointLayer implements CustomLayerInterface {
+  readonly id = 'conjunctions-3d-endpoints'
   readonly type = 'custom' as const
   readonly renderingMode = '3d' as const
 
@@ -102,6 +109,8 @@ export class ConjunctionLineLayer implements CustomLayerInterface {
   private uTransition: WebGLUniformLocation | null = null
   private uFallback: WebGLUniformLocation | null = null
   private uAltScale: WebGLUniformLocation | null = null
+  private uDotRadius: WebGLUniformLocation | null = null
+  private uPixelRatio: WebGLUniformLocation | null = null
 
   constructor(map: MapLibreMap) {
     this.map = map
@@ -109,7 +118,7 @@ export class ConjunctionLineLayer implements CustomLayerInterface {
 
   onAdd(_map: MapLibreMap, gl: WebGLRenderingContext | WebGL2RenderingContext): void {
     if (!(gl instanceof WebGL2RenderingContext)) {
-      console.warn('[ConjunctionLineLayer] WebGL2 context required; layer disabled')
+      console.warn('[ConjunctionEndpointLayer] WebGL2 context required; layer disabled')
       return
     }
     this.gl = gl
@@ -129,11 +138,6 @@ export class ConjunctionLineLayer implements CustomLayerInterface {
     this.vertexCount = 0
   }
 
-  /**
-   * Update the layer to render the line for `event` (or clear it if `null`).
-   * Endpoints come from `positions`; if either NORAD isn't in the cache yet,
-   * the line is suppressed for this frame.
-   */
   setData(event: ConjunctionEvent | null, positions: Map<number, SatPosition>): void {
     const gl = this.gl
     if (!gl || !this.vbo) {
@@ -152,26 +156,15 @@ export class ConjunctionLineLayer implements CustomLayerInterface {
       this.map.triggerRepaint()
       return
     }
-    // Great-circle path between the two sub-satellite points, with altitudes
-    // linearly interpolated so the arc connects A's altitude → B's altitude.
-    // Both endpoints are in space, so the curve never dips below ground.
-    const points = interpolateGreatCircle([a.lng, a.lat], [b.lng, b.lat], SEGMENTS)
-    const altA = a.altitudeKm
-    const altB = b.altitudeKm
-    const data = new Float32Array(points.length * FLOATS_PER_VERTEX)
-    const last = points.length - 1 || 1
-    for (let i = 0; i < points.length; i++) {
-      const t = i / last
-      const altMeters = (altA * (1 - t) + altB * t) * 1000
-      const [lng, lat] = points[i]
-      const [mx, my] = lngLatToMerc(lng, lat)
-      data[i * FLOATS_PER_VERTEX + 0] = mx
-      data[i * FLOATS_PER_VERTEX + 1] = my
-      data[i * FLOATS_PER_VERTEX + 2] = altMeters
-    }
+    const [ax, ay] = lngLatToMerc(a.lng, a.lat)
+    const [bx, by] = lngLatToMerc(b.lng, b.lat)
+    const data = new Float32Array([
+      ax, ay, a.altitudeKm * 1000,
+      bx, by, b.altitudeKm * 1000,
+    ])
     gl.bindBuffer(gl.ARRAY_BUFFER, this.vbo)
     gl.bufferSubData(gl.ARRAY_BUFFER, 0, data)
-    this.vertexCount = points.length
+    this.vertexCount = 2
     this.map.triggerRepaint()
   }
 
@@ -180,7 +173,7 @@ export class ConjunctionLineLayer implements CustomLayerInterface {
     args: CustomRenderMethodInput,
   ): void {
     if (!(gl instanceof WebGL2RenderingContext)) return
-    if (this.vertexCount < 2 || !this.vbo) return
+    if (this.vertexCount === 0 || !this.vbo) return
 
     const variant = args.shaderData.variantName
     if (!this.program || this.programVariantKey !== variant) {
@@ -200,6 +193,9 @@ export class ConjunctionLineLayer implements CustomLayerInterface {
     if (this.uFallback)
       gl.uniformMatrix4fv(this.uFallback, false, pd.fallbackMatrix as Float32List)
     if (this.uAltScale) gl.uniform1f(this.uAltScale, ALTITUDE_SCALE)
+    if (this.uDotRadius) gl.uniform1f(this.uDotRadius, RING_RADIUS_PX)
+    if (this.uPixelRatio)
+      gl.uniform1f(this.uPixelRatio, window.devicePixelRatio || 1)
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.vbo)
     gl.enableVertexAttribArray(ATTRIB_POS)
@@ -216,7 +212,7 @@ export class ConjunctionLineLayer implements CustomLayerInterface {
       gl.ONE_MINUS_SRC_ALPHA,
     )
 
-    gl.drawArrays(gl.LINE_STRIP, 0, this.vertexCount)
+    gl.drawArrays(gl.POINTS, 0, this.vertexCount)
 
     gl.disableVertexAttribArray(ATTRIB_POS)
     gl.disableVertexAttribArray(ATTRIB_ALT)
@@ -251,7 +247,7 @@ export class ConjunctionLineLayer implements CustomLayerInterface {
 
     if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
       console.error(
-        '[ConjunctionLineLayer] link failed:',
+        '[ConjunctionEndpointLayer] link failed:',
         gl.getProgramInfoLog(program),
       )
       gl.deleteProgram(program)
@@ -265,5 +261,7 @@ export class ConjunctionLineLayer implements CustomLayerInterface {
     this.uTransition = gl.getUniformLocation(program, 'u_projection_transition')
     this.uFallback = gl.getUniformLocation(program, 'u_projection_fallback_matrix')
     this.uAltScale = gl.getUniformLocation(program, 'u_altitude_scale')
+    this.uDotRadius = gl.getUniformLocation(program, 'u_dot_radius')
+    this.uPixelRatio = gl.getUniformLocation(program, 'u_pixel_ratio')
   }
 }

@@ -19,6 +19,7 @@ export interface ConjunctionEvent {
   groupB: SatGroup
   midLat: number
   midLng: number
+  midAltKm: number
 }
 
 export interface OrbitStreamHandle {
@@ -100,7 +101,7 @@ export function decodePositionBatch(
  * Decode a bincode-serialized `ConjunctionBatchMsg`:
  *   u64 generated_epoch_ms | u64 vec_len | N × WireConjunction
  *
- * WireConjunction layout (34 bytes, little-endian, no padding):
+ * WireConjunction layout (38 bytes, little-endian, no padding):
  *   +0  u32 norad_a
  *   +4  u32 norad_b
  *   +8  u64 tca_epoch_ms
@@ -110,6 +111,7 @@ export function decodePositionBatch(
  *  +25  u8  group_b
  *  +26  f32 mid_lat
  *  +30  f32 mid_lng
+ *  +34  f32 mid_alt_km
  */
 export function decodeConjunctionBatch(
   view: DataView,
@@ -118,7 +120,7 @@ export function decodeConjunctionBatch(
 ): ConjunctionEvent[] {
   if (len < 16) return []
   const count = readU64LE(view, offset + 8)
-  const recordSize = 34
+  const recordSize = 38
   const expected = 16 + count * recordSize
   if (len < expected) return []
 
@@ -134,6 +136,7 @@ export function decodeConjunctionBatch(
     const groupB = GROUP_BY_U8[view.getUint8(off + 25)] ?? 'active'
     const midLat = view.getFloat32(off + 26, true)
     const midLng = view.getFloat32(off + 30, true)
+    const midAltKm = view.getFloat32(off + 34, true)
     off += recordSize
     events[i] = {
       noradA,
@@ -145,6 +148,7 @@ export function decodeConjunctionBatch(
       groupB,
       midLat,
       midLng,
+      midAltKm,
     }
   }
   return events

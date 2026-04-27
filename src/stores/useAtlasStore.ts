@@ -16,6 +16,7 @@ export const useAtlasStore = create<AtlasState>((set, get) => ({
   conjunctionsVisible: false,
   conjunctionEvents: [],
   selectedConjunction: null,
+  conjunctionsReceivedFirstBatch: false,
   terminatorVisible: false,
   auroraVisible: false,
   auroraKp: 2,
@@ -46,16 +47,31 @@ export const useAtlasStore = create<AtlasState>((set, get) => ({
             conjunctionsVisible: false,
             conjunctionEvents: [],
             selectedConjunction: null,
+            conjunctionsReceivedFirstBatch: false,
           },
     ),
   // Enabling conjunctions force-enables globe + satellites; disabling clears state.
+  // Either transition resets the "received first batch" flag so the drawer shows
+  // a fresh "Loading…" until the next 0.1 Hz tick lands.
   setConjunctionsVisible: (on: boolean) =>
     set(
       on
-        ? { conjunctionsVisible: true, globeMode: true, satellitesVisible: true }
-        : { conjunctionsVisible: false, conjunctionEvents: [], selectedConjunction: null },
+        ? {
+            conjunctionsVisible: true,
+            globeMode: true,
+            satellitesVisible: true,
+            conjunctionsReceivedFirstBatch: false,
+          }
+        : {
+            conjunctionsVisible: false,
+            conjunctionEvents: [],
+            selectedConjunction: null,
+            conjunctionsReceivedFirstBatch: false,
+          },
     ),
-  // Replacing the events list also drops the selection if the chosen pair is gone.
+  // Replacing the events list also drops the selection if the chosen pair is
+  // gone, and flips `receivedFirstBatch` true so the panel can switch from
+  // "Loading…" to either the row list or "No close approaches".
   setConjunctionEvents: (events: ConjunctionEvent[]) => {
     const sel = get().selectedConjunction
     if (
@@ -66,9 +82,13 @@ export const useAtlasStore = create<AtlasState>((set, get) => ({
           (e.noradA === sel.noradB && e.noradB === sel.noradA),
       )
     ) {
-      set({ conjunctionEvents: events, selectedConjunction: null })
+      set({
+        conjunctionEvents: events,
+        selectedConjunction: null,
+        conjunctionsReceivedFirstBatch: true,
+      })
     } else {
-      set({ conjunctionEvents: events })
+      set({ conjunctionEvents: events, conjunctionsReceivedFirstBatch: true })
     }
   },
   setSelectedConjunction: (selectedConjunction) => set({ selectedConjunction }),

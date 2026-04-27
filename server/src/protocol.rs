@@ -50,8 +50,9 @@ pub struct PositionBatchMsg {
 }
 
 /// Single predicted close-approach event. 38 bytes/event with bincode framing.
-/// `mid_lat` / `mid_lng` are the geodetic projection of the TCA midpoint —
-/// embedded so the client can render the dot without a position-lookup race.
+/// `mid_lat` / `mid_lng` / `mid_alt_km` are the geodetic position of the TCA
+/// midpoint in 3D — embedded so the client can render the elevated dot at
+/// real altitude without a position-lookup race.
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct WireConjunction {
     pub norad_a: u32,
@@ -63,6 +64,7 @@ pub struct WireConjunction {
     pub group_b: u8,
     pub mid_lat: f32,
     pub mid_lng: f32,
+    pub mid_alt_km: f32,
 }
 
 #[derive(Debug, Serialize)]

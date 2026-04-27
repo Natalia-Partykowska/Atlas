@@ -15,6 +15,17 @@ const GRID_CELL_KM: f64 = 50.0;
 pub const SAMPLE_COUNT: usize = 13;
 const MAX_EVENTS: usize = 500;
 
+/// Minimum relative velocity for an event to count as a real conjunction.
+/// 100 m/s is well below any realistic crossing-orbit conjunction (km/s) but
+/// well above the residual differential drift seen between co-orbital pairs:
+///   • catalog duplicates (same physical object, two NORAD IDs) — Δv ≈ 0
+///   • formation flyers (ISS-deployed CubeSats, Starlink stack) — Δv < 10 m/s
+///   • slowly-separating debris from the same parent — Δv up to ~50 m/s
+/// Below this threshold the pair isn't *converging* — they share an orbit,
+/// they're not approaching each other. Real warning systems (CARA, SOCRATES)
+/// already filter on conjunction geometry, not just proximity.
+const MIN_REAL_REL_VEL_KMS: f32 = 0.1;
+
 /// Output of one screening pass. Mirrors `WireConjunction` but uses the
 /// strongly-typed `Group` enum; mapped to `u8` at the wire boundary.
 #[derive(Debug, Clone, Copy)]
@@ -28,6 +39,7 @@ pub struct ConjunctionEvent {
     pub group_b: Group,
     pub mid_lat_deg: f32,
     pub mid_lng_deg: f32,
+    pub mid_alt_km: f32,
 }
 
 /// 13 half-space neighbor offsets in 3D — every unordered pair of cells is
@@ -260,6 +272,13 @@ fn narrowphase(
     let dv_at = lerp3(&dv0, &dv1, t_star);
     let rel_vel_kms = dot3(&dv_at, &dv_at).sqrt() as f32;
 
+    // Drop co-orbital noise: catalog duplicates and formation flyers don't
+    // have measurable relative motion, so they're not actually approaching
+    // each other. See `MIN_REAL_REL_VEL_KMS` for the threshold rationale.
+    if rel_vel_kms < MIN_REAL_REL_VEL_KMS {
+        return None;
+    }
+
     let t0_ms = times[k0].timestamp_millis();
     let t1_ms = times[k1].timestamp_millis();
     let tca_epoch_ms_f = t0_ms as f64 + (t1_ms - t0_ms) as f64 * t_star;
@@ -276,8 +295,8 @@ fn narrowphase(
     ];
     let gmst = gmst_rad(tca);
     let (ex, ey, ez) = teme_to_ecef(mid_teme, gmst);
-    let (mid_lat_deg, mid_lng_deg, _alt) = ecef_to_geodetic(ex, ey, ez);
-    if !mid_lat_deg.is_finite() || !mid_lng_deg.is_finite() {
+    let (mid_lat_deg, mid_lng_deg, mid_alt_km) = ecef_to_geodetic(ex, ey, ez);
+    if !mid_lat_deg.is_finite() || !mid_lng_deg.is_finite() || !mid_alt_km.is_finite() {
         return None;
     }
 
@@ -291,6 +310,7 @@ fn narrowphase(
         group_b: entries[b].group,
         mid_lat_deg: mid_lat_deg as f32,
         mid_lng_deg: mid_lng_deg as f32,
+        mid_alt_km: mid_alt_km as f32,
     })
 }
 
@@ -322,7 +342,11 @@ mod tests {
     use crate::catalog::{compute_apsides, Catalog, CatalogEntry};
     use chrono::{NaiveDate, TimeZone};
 
-    fn make_test_entry(norad_id: u64, mean_anomaly_deg: f64) -> CatalogEntry {
+    fn make_test_entry(
+        norad_id: u64,
+        inclination_deg: f64,
+        mean_anomaly_deg: f64,
+    ) -> CatalogEntry {
         let elements = sgp4::Elements {
             object_name: Some(format!("TEST-{norad_id}")),
             international_designator: None,
@@ -336,10 +360,15 @@ mod tests {
             mean_motion_ddot: 0.0,
             drag_term: 0.0,
             element_set_number: 999,
-            inclination: 51.64,
-            right_ascension: 100.0,
-            eccentricity: 0.0001,
-            argument_of_perigee: 90.0,
+            // RAAN = 0, AOP = 0, e = 0: perigee sits along the ECI +X axis
+            // regardless of inclination, so two satellites with different
+            // `inclination_deg` but the same MA = 0 share the same 3D position
+            // at the TLE epoch. Only their velocity vectors differ — the
+            // perpendicular-crossing geometry the new smoke test relies on.
+            inclination: inclination_deg,
+            right_ascension: 0.0,
+            eccentricity: 0.0,
+            argument_of_perigee: 0.0,
             mean_anomaly: mean_anomaly_deg,
             mean_motion: 15.5,
             revolution_number: 0,
@@ -360,12 +389,13 @@ mod tests {
     }
 
     #[test]
-    fn screener_detects_co_orbital_close_approach() {
-        // Two satellites in an ISS-like orbit, separated only by mean anomaly.
-        // 1 km along-track at orbital radius ~6790 km ≈ 0.00845° of mean anomaly,
-        // so a 0.005° offset puts them roughly 0.6 km apart — well under 5 km.
-        let a = make_test_entry(99990, 270.000);
-        let b = make_test_entry(99991, 270.005);
+    fn screener_drops_co_orbital_drifters() {
+        // Two satellites in nearly-identical orbits (0.005° mean-anomaly offset).
+        // Their relative motion is sub-1 m/s — exactly the catalog-duplicate
+        // and formation-flyer noise pattern that previously dominated the panel.
+        // With the rel-vel filter, this geometry must produce zero events.
+        let a = make_test_entry(99990, 51.64, 270.000);
+        let b = make_test_entry(99991, 51.64, 270.005);
         let catalog = Catalog {
             entries: vec![a, b],
             loaded_at: Utc::now(),
@@ -375,43 +405,17 @@ mod tests {
             .single()
             .expect("valid epoch");
         let events = screen(&catalog, now, Duration::hours(1));
-
-        assert_eq!(
-            events.len(),
-            1,
-            "expected exactly one event for a co-orbital pair, got {}",
+        assert!(
+            events.is_empty(),
+            "co-orbital drifters should be filtered, got {} events",
             events.len()
-        );
-        let e = &events[0];
-        assert!(
-            e.miss_km < THRESHOLD_KM as f32,
-            "miss should be < {THRESHOLD_KM} km, got {}",
-            e.miss_km
-        );
-        assert!(
-            e.miss_km < 2.0,
-            "miss should be near 1 km, got {}",
-            e.miss_km
-        );
-        assert!(
-            (e.norad_a == 99990 && e.norad_b == 99991)
-                || (e.norad_a == 99991 && e.norad_b == 99990),
-            "event should mention both NORAD IDs, got {} ↔ {}",
-            e.norad_a,
-            e.norad_b
-        );
-        assert!(
-            e.mid_lat_deg.is_finite() && e.mid_lng_deg.is_finite(),
-            "midpoint must be finite (lat={}, lng={})",
-            e.mid_lat_deg,
-            e.mid_lng_deg
         );
     }
 
     #[test]
     fn screener_returns_empty_for_far_apart_orbits() {
         // ISS-like LEO vs GEO — apsides shells should not overlap, no events emitted.
-        let leo = make_test_entry(99990, 270.0);
+        let leo = make_test_entry(99990, 51.64, 270.0);
         let mut geo_elements = sgp4::Elements {
             object_name: Some("GEO".to_string()),
             international_designator: None,

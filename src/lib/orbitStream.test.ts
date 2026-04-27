@@ -37,6 +37,7 @@ interface ConjRecord {
   groupB: number
   midLat: number
   midLng: number
+  midAltKm: number
 }
 
 function buildPositionPayload(records: SatRecord[], tickMs = 0): ArrayBuffer {
@@ -59,7 +60,7 @@ function buildPositionPayload(records: SatRecord[], tickMs = 0): ArrayBuffer {
 }
 
 function buildConjunctionPayload(records: ConjRecord[], generatedMs = 0): ArrayBuffer {
-  const buf = new ArrayBuffer(16 + records.length * 34)
+  const buf = new ArrayBuffer(16 + records.length * 38)
   const view = new DataView(buf)
   view.setUint32(0, generatedMs & 0xffffffff, true)
   view.setUint32(4, Math.floor(generatedMs / 0x1_0000_0000), true)
@@ -77,7 +78,8 @@ function buildConjunctionPayload(records: ConjRecord[], generatedMs = 0): ArrayB
     view.setUint8(off + 25, r.groupB)
     view.setFloat32(off + 26, r.midLat, true)
     view.setFloat32(off + 30, r.midLng, true)
-    off += 34
+    view.setFloat32(off + 34, r.midAltKm, true)
+    off += 38
   }
   return buf
 }
@@ -208,7 +210,7 @@ describe('decodeConjunctionBatch', () => {
     const buf = buildConjunctionPayload([
       {
         noradA: 1, noradB: 2, tcaEpochMs: 0, missKm: 0, relVelKms: 0,
-        groupA: 0, groupB: 0, midLat: 0, midLng: 0,
+        groupA: 0, groupB: 0, midLat: 0, midLng: 0, midAltKm: 0,
       },
     ])
     const tampered = buf.slice(0)
@@ -223,7 +225,7 @@ describe('decodeConjunctionBatch', () => {
         tcaEpochMs: 1_777_217_947_961,
         missKm: 3.2, relVelKms: 14.1,
         groupA: 0, groupB: 5, // iss ↔ active
-        midLat: -12.345, midLng: 67.89,
+        midLat: -12.345, midLng: 67.89, midAltKm: 412.5,
       },
     ]
     const buf = buildConjunctionPayload(records, 1_777_217_900_000)
@@ -239,17 +241,18 @@ describe('decodeConjunctionBatch', () => {
     expect(e.groupB).toBe('active')
     expect(e.midLat).toBeCloseTo(-12.345, 3)
     expect(e.midLng).toBeCloseTo(67.89, 3)
+    expect(e.midAltKm).toBeCloseTo(412.5, 2)
   })
 
   it('decodes multiple events in order', () => {
     const records: ConjRecord[] = [
       {
         noradA: 1, noradB: 2, tcaEpochMs: 100, missKm: 1, relVelKms: 1,
-        groupA: 2, groupB: 3, midLat: 10, midLng: 20,
+        groupA: 2, groupB: 3, midLat: 10, midLng: 20, midAltKm: 800,
       },
       {
         noradA: 3, noradB: 4, tcaEpochMs: 200, missKm: 4.99, relVelKms: 8,
-        groupA: 4, groupB: 5, midLat: -45, midLng: 110,
+        groupA: 4, groupB: 5, midLat: -45, midLng: 110, midAltKm: 35786,
       },
     ]
     const events = decodeConj(buildConjunctionPayload(records))
@@ -276,7 +279,7 @@ describe('decodeConjunctionBatch', () => {
       const buf = buildConjunctionPayload([
         {
           noradA: 1, noradB: 2, tcaEpochMs: 0, missKm: 0, relVelKms: 0,
-          groupA: byte, groupB: byte, midLat: 0, midLng: 0,
+          groupA: byte, groupB: byte, midLat: 0, midLng: 0, midAltKm: 0,
         },
       ])
       const e = decodeConj(buf)[0]
@@ -289,7 +292,7 @@ describe('decodeConjunctionBatch', () => {
     const buf = buildConjunctionPayload([
       {
         noradA: 1, noradB: 2, tcaEpochMs: 0, missKm: 0, relVelKms: 0,
-        groupA: 99, groupB: 200, midLat: 0, midLng: 0,
+        groupA: 99, groupB: 200, midLat: 0, midLng: 0, midAltKm: 0,
       },
     ])
     const e = decodeConj(buf)[0]
@@ -449,7 +452,7 @@ describe('connectOrbitStream', () => {
     const inner = buildConjunctionPayload([
       {
         noradA: 1, noradB: 2, tcaEpochMs: 1234, missKm: 4.2, relVelKms: 9.1,
-        groupA: 0, groupB: 5, midLat: -10, midLng: 30,
+        groupA: 0, groupB: 5, midLat: -10, midLng: 30, midAltKm: 412,
       },
     ])
     mockWs.simulateMessage(withTypeByte(MSG_CONJUNCTION_BATCH, inner))
@@ -479,7 +482,7 @@ describe('connectOrbitStream', () => {
     const inner = buildConjunctionPayload([
       {
         noradA: 1, noradB: 2, tcaEpochMs: 0, missKm: 1, relVelKms: 1,
-        groupA: 0, groupB: 0, midLat: 0, midLng: 0,
+        groupA: 0, groupB: 0, midLat: 0, midLng: 0, midAltKm: 0,
       },
     ])
     // Should not throw even though onConjunctions is undefined.

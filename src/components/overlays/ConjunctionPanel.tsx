@@ -33,6 +33,7 @@ export default function ConjunctionPanel() {
   const selected = useAtlasStore((s) => s.selectedConjunction)
   const setSelected = useAtlasStore((s) => s.setSelectedConjunction)
   const setConjunctionsVisible = useAtlasStore((s) => s.setConjunctionsVisible)
+  const receivedFirstBatch = useAtlasStore((s) => s.conjunctionsReceivedFirstBatch)
 
   // Drawer is "open" only when conjunctions toggle AND we're on the globe
   // (the dot/line layers are globe-only, so showing the drawer in flat mode
@@ -72,30 +73,21 @@ export default function ConjunctionPanel() {
   }
 
   return (
-    <>
-      {/* Backdrop — clicking it closes the drawer. Pointer events disabled
-          when closed so the rest of the UI (Toolbar, globe) is interactive. */}
-      <div
-        onClick={() => setConjunctionsVisible(false)}
-        aria-hidden
-        className={[
-          'fixed inset-0 z-40 bg-black/15 transition-opacity ease-out',
-          isOpen ? 'opacity-100' : 'opacity-0 pointer-events-none',
-        ].join(' ')}
-        style={{ transitionDuration: `${TRANSITION_MS}ms` }}
-      />
-
-      {/* Drawer — always mounted so the slide animation fires both ways. */}
-      <aside
-        aria-label="Predicted satellite conjunctions"
-        className={[
-          'fixed top-0 right-0 h-full z-50 flex flex-col',
-          'bg-black/60 backdrop-blur-md border-l border-white/10',
-          'transition-transform ease-out shadow-2xl',
-          isOpen ? 'translate-x-0' : 'translate-x-full',
-        ].join(' ')}
-        style={{ width: `${DRAWER_WIDTH_PX}px`, transitionDuration: `${TRANSITION_MS}ms` }}
-      >
+    // Non-modal side drawer — no backdrop, no click-shielding. The globe
+    // (and Toolbar) stay fully interactive while the panel is open, so the
+    // user can zoom / pan / rotate to inspect the selected pair. Close
+    // affordances: the X in the header, Escape, or the Conjunctions toolbar
+    // button.
+    <aside
+      aria-label="Predicted satellite conjunctions"
+      className={[
+        'fixed top-0 right-0 h-full z-40 flex flex-col',
+        'bg-black/60 backdrop-blur-md border-l border-white/10',
+        'transition-transform ease-out shadow-2xl',
+        isOpen ? 'translate-x-0' : 'translate-x-full pointer-events-none',
+      ].join(' ')}
+      style={{ width: `${DRAWER_WIDTH_PX}px`, transitionDuration: `${TRANSITION_MS}ms` }}
+    >
         <header className="px-4 py-3 border-b border-white/10 flex items-center gap-2">
           <h2 className="text-white/90 text-sm font-medium flex-1">
             Conjunctions
@@ -120,7 +112,15 @@ export default function ConjunctionPanel() {
         </header>
 
         <div className="flex-1 overflow-y-auto">
-          {sorted.length === 0 ? (
+          {!receivedFirstBatch ? (
+            <p className="text-white/50 text-xs px-4 py-4 flex items-center gap-2">
+              <span
+                aria-hidden
+                className="inline-block w-3 h-3 rounded-full border-2 border-white/30 border-t-white/80 animate-spin"
+              />
+              Loading…
+            </p>
+          ) : sorted.length === 0 ? (
             <p className="text-white/40 text-xs px-4 py-4">
               No close approaches in next 2&nbsp;h.
             </p>
@@ -161,8 +161,7 @@ export default function ConjunctionPanel() {
               })}
             </ul>
           )}
-        </div>
-      </aside>
-    </>
+      </div>
+    </aside>
   )
 }
