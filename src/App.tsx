@@ -4,6 +4,7 @@ import LayerSwitcher from '@/components/overlays/LayerSwitcher'
 import Legend from '@/components/overlays/Legend'
 import Toolbar from '@/components/overlays/Toolbar'
 import ConjunctionPanel from '@/components/overlays/ConjunctionPanel'
+import SatelliteInfoPanel from '@/components/overlays/SatelliteInfoPanel'
 
 export default function App() {
   return (
@@ -14,6 +15,7 @@ export default function App() {
       <Tooltip />
       <Toolbar />
       <ConjunctionPanel />
+      <SatelliteInfoPanel />
     </div>
   )
 }

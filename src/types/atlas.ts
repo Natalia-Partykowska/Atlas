@@ -1,4 +1,5 @@
 import type { ConjunctionEvent } from '@/lib/orbitStream'
+import type { SatelliteCatalogEntry } from '@/lib/satelliteCatalog'
 
 export type ISO3 = string
 export type CountryDataMap = Record<ISO3, number>
@@ -32,6 +33,14 @@ export interface TooltipState {
   iso: string
 }
 
+export interface SatelliteHoverState {
+  visible: boolean
+  x: number
+  y: number
+  norad: number
+  name: string
+}
+
 export interface AtlasState {
   tooltip: TooltipState
   selectedCountry: string | null
@@ -46,6 +55,9 @@ export interface AtlasState {
   conjunctionsVisible: boolean
   conjunctionEvents: ConjunctionEvent[]
   selectedConjunction: { noradA: number; noradB: number } | null
+  satelliteCatalog: Map<number, SatelliteCatalogEntry> | null
+  satelliteHover: SatelliteHoverState
+  selectedSatellite: { norad: number } | null
   // Distinguishes "loading" (drawer open, awaiting first 0.1 Hz batch) from
   // "really empty" (server reported zero events). Goes false when the user
   // toggles the drawer on; goes true when any event batch arrives.
@@ -68,6 +80,9 @@ export interface AtlasState {
   setConjunctionsVisible: (on: boolean) => void
   setConjunctionEvents: (events: ConjunctionEvent[]) => void
   setSelectedConjunction: (sel: { noradA: number; noradB: number } | null) => void
+  setSatelliteCatalog: (catalog: Map<number, SatelliteCatalogEntry> | null) => void
+  setSatelliteHover: (hover: SatelliteHoverState) => void
+  setSelectedSatellite: (sel: { norad: number } | null) => void
   setTerminatorVisible: (on: boolean) => void
   setAuroraVisible: (on: boolean) => void
   setAuroraInfo: (kp: number, label: string, dataUnavailable: boolean) => void

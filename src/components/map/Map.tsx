@@ -37,6 +37,15 @@ import { ConjunctionMidpointLayer } from '@/lib/conjunctionMidpointLayer'
 import { ConjunctionEndpointLayer } from '@/lib/conjunctionEndpointLayer'
 import { connectOrbitStream } from '@/lib/orbitStream'
 import type { OrbitStreamHandle, ViewportBounds } from '@/lib/orbitStream'
+import { fetchSatelliteCatalog } from '@/lib/satelliteCatalog'
+import { fetchSatelliteTLE } from '@/lib/satelliteTLE'
+import { pickNearestSatellite } from '@/lib/satellitePicking'
+import { SatelliteSelectionLayer } from '@/lib/satelliteSelectionLayer'
+import { SatelliteHoverLayer } from '@/lib/satelliteHoverLayer'
+import { SatelliteOrbitLayer } from '@/lib/satelliteOrbitLayer'
+import { generateOrbitPoints } from '@/lib/satelliteOrbital'
+import { twoline2satrec } from 'satellite.js'
+import type { SatRec } from 'satellite.js'
 import DistanceLabel from '@/components/overlays/DistanceLabel'
 import AntipodeLabel from '@/components/overlays/AntipodeLabel'
 import type { AntipodeInfo } from '@/components/overlays/AntipodeLabel'
@@ -89,6 +98,13 @@ export default function Map() {
   // Mirrors `selectedConjunction` for the auto-scroll gate. The animation loop
   // runs outside React, so it needs a ref it can read every frame.
   const selectedConjunctionRef = useRef<{ noradA: number; noradB: number } | null>(null)
+  // Mirrors `satellitesVisible` for the imperative MapLibre handlers (mousemove
+  // / mouseleave / click) that need to gate on it without re-binding on each
+  // toggle.
+  const satellitesVisibleRef = useRef<boolean>(false)
+  // Coalesces satellite picking work onto an animation frame — without this,
+  // 17k position projections per mousemove burns the main thread.
+  const satPickingRafRef = useRef<number | null>(null)
 
   // Submarine cables cache
   const cablesGeoJSONRef = useRef<object | null>(null)
@@ -107,6 +123,17 @@ export default function Map() {
   const conjLineLayerRef = useRef<ConjunctionLineLayer | null>(null)
   const conjMidpointLayerRef = useRef<ConjunctionMidpointLayer | null>(null)
   const conjEndpointLayerRef = useRef<ConjunctionEndpointLayer | null>(null)
+  // Satellite selection visuals — set once on selection change, refreshed each
+  // position batch for the halo (so it tracks live motion).
+  const satOrbitLayerRef = useRef<SatelliteOrbitLayer | null>(null)
+  const satSelectionLayerRef = useRef<SatelliteSelectionLayer | null>(null)
+  const satHoverLayerRef = useRef<SatelliteHoverLayer | null>(null)
+  const selectedSatelliteRef = useRef<{ norad: number } | null>(null)
+  // Cached satrec for the currently-selected satellite. Populated by the
+  // orbit-recompute effect once TLE resolves; read by the per-batch orbit
+  // refresh below to keep the closed-loop ring oriented to current Earth
+  // rotation as time passes.
+  const selectedSatrecRef = useRef<SatRec | null>(null)
 
   const setTooltip = useAtlasStore((s) => s.setTooltip)
   const setSelectedCountry = useAtlasStore((s) => s.setSelectedCountry)
@@ -125,6 +152,9 @@ export default function Map() {
   const selectedConjunction = useAtlasStore((s) => s.selectedConjunction)
   const setConjunctionEvents = useAtlasStore((s) => s.setConjunctionEvents)
   const setSelectedConjunction = useAtlasStore((s) => s.setSelectedConjunction)
+  const setSatelliteCatalog = useAtlasStore((s) => s.setSatelliteCatalog)
+  const setSatelliteHover = useAtlasStore((s) => s.setSatelliteHover)
+  const selectedSatellite = useAtlasStore((s) => s.selectedSatellite)
   const terminatorVisible = useAtlasStore((s) => s.terminatorVisible)
   const setTerminatorVisible = useAtlasStore((s) => s.setTerminatorVisible)
   const auroraVisible = useAtlasStore((s) => s.auroraVisible)
@@ -383,6 +413,24 @@ export default function Map() {
       conjEndpointLayerRef.current = conjEndpointLayer
       map.addLayer(conjEndpointLayer)
 
+      // Satellite-selection visuals — full-orbit line + cyan halo on the
+      // currently selected satellite. Same stacking philosophy as conjunctions
+      // (above the swarm, below the terminator glow).
+      const satOrbitLayer = new SatelliteOrbitLayer(map)
+      satOrbitLayerRef.current = satOrbitLayer
+      map.addLayer(satOrbitLayer)
+
+      const satSelectionLayer = new SatelliteSelectionLayer(map)
+      satSelectionLayerRef.current = satSelectionLayer
+      map.addLayer(satSelectionLayer)
+
+      // White hover ring — sits above the cyan selection halo so the user
+      // gets unambiguous "this is the sat I'm about to click" feedback even
+      // when one is already selected.
+      const satHoverLayer = new SatelliteHoverLayer(map)
+      satHoverLayerRef.current = satHoverLayer
+      map.addLayer(satHoverLayer)
+
       // 5c. Terminator glow line (above borders for visibility)
       map.addLayer({
         id: 'terminator-border',
@@ -580,9 +628,10 @@ export default function Map() {
         compareModeRef.current ||
         measureModeRef.current ||
         antipodeModeRef.current ||
-        // Pause auto-rotation only while a specific conjunction pair is being
-        // studied — the camera flew to the pair, the globe shouldn't drift away.
-        selectedConjunctionRef.current !== null
+        // Pause auto-rotation while a specific conjunction pair OR satellite
+        // is selected — the camera flew there, the globe shouldn't drift away.
+        selectedConjunctionRef.current !== null ||
+        selectedSatelliteRef.current !== null
 
       const animate = (timestamp: number) => {
         if (!isPaused && !isAnyInteractiveMode()) {
@@ -622,6 +671,8 @@ export default function Map() {
         'mousemove',
         'country-fills',
         (e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
+          // Satellites mode owns hover — country highlight + tooltip stay off.
+          if (satellitesVisibleRef.current) return
           if (!e.features || e.features.length === 0) return
           const feature = e.features[0]
           const id = feature.id as number
@@ -650,6 +701,7 @@ export default function Map() {
       )
 
       map.on('mouseleave', 'country-fills', () => {
+        if (satellitesVisibleRef.current) return
         if (hoveredIdRef.current !== null) {
           map.setFeatureState(
             { source: 'countries', id: Number(hoveredIdRef.current) },
@@ -664,6 +716,57 @@ export default function Map() {
         if (ghostStatusRef.current !== 'dragging') {
           setTooltip({ visible: false, x: 0, y: 0, name: '', iso: '' })
         }
+      })
+
+      // ── Satellite hover (globe + satellites mode only) ───────────────────
+      map.on('mousemove', (e: maplibregl.MapMouseEvent) => {
+        if (!satellitesVisibleRef.current || !globeModeRef.current) return
+        if (satPickingRafRef.current !== null) return
+        const px = e.point.x
+        const py = e.point.y
+        satPickingRafRef.current = requestAnimationFrame(() => {
+          satPickingRafRef.current = null
+          const positions = latestPositionsByNoradRef.current
+          const canvas = map.getCanvas()
+          if (positions.size === 0) {
+            canvas.style.cursor = ''
+            return
+          }
+          const c = map.getCenter()
+          const hit = pickNearestSatellite(map, { x: px, y: py }, positions, 22, {
+            lng: c.lng,
+            lat: c.lat,
+          })
+          if (hit) {
+            canvas.style.cursor = 'pointer'
+            const cat = useAtlasStore.getState().satelliteCatalog
+            const catName = cat?.get(hit.norad)?.name
+            const fallback =
+              hit.name && hit.name !== String(hit.norad)
+                ? hit.name
+                : `NORAD #${hit.norad}`
+            setSatelliteHover({
+              visible: true,
+              x: px,
+              y: py,
+              norad: hit.norad,
+              name: catName ?? fallback,
+            })
+            // Paint the white hover ring in the same frame; the per-batch
+            // refresh keeps it tracking the sat's motion afterwards.
+            const sel = selectedSatelliteRef.current
+            satHoverLayerRef.current?.setData(
+              sel && sel.norad === hit.norad ? null : hit,
+            )
+          } else {
+            canvas.style.cursor = ''
+            const cur = useAtlasStore.getState().satelliteHover
+            if (cur.visible) {
+              setSatelliteHover({ visible: false, x: 0, y: 0, norad: 0, name: '' })
+            }
+            satHoverLayerRef.current?.setData(null)
+          }
+        })
       })
 
       // ── Ghost drag (compare mode) ─────────────────────────────────────────
@@ -699,6 +802,9 @@ export default function Map() {
         'country-fills',
         (e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
           if (!e.features || e.features.length === 0) return
+
+          // Satellites mode owns clicks (general handler picks the nearest sat).
+          if (satellitesVisibleRef.current) return
 
           // Measure / antipode modes handled by the general click handler
           if (measureModeRef.current || antipodeModeRef.current) return
@@ -740,6 +846,30 @@ export default function Map() {
 
       // ── General click (ocean + measure + antipode) ────────────────────────
       map.on('click', (e: maplibregl.MapMouseEvent) => {
+        // ── Satellite pick ─────────────────────────────────────────────────
+        // Custom layers are invisible to queryRenderedFeatures, so we project
+        // each live position to screen space and find the nearest within 12px.
+        if (
+          satellitesVisibleRef.current &&
+          globeModeRef.current &&
+          !compareModeRef.current &&
+          !measureModeRef.current &&
+          !antipodeModeRef.current
+        ) {
+          const positions = latestPositionsByNoradRef.current
+          if (positions.size > 0) {
+            const c = map.getCenter()
+            const hit = pickNearestSatellite(map, e.point, positions, 22, {
+              lng: c.lng,
+              lat: c.lat,
+            })
+            if (hit) {
+              useAtlasStore.getState().setSelectedSatellite({ norad: hit.norad })
+              return
+            }
+          }
+        }
+
         const { lng, lat } = e.lngLat
         const features = map.queryRenderedFeatures(e.point, {
           layers: ['country-fills'],
@@ -1018,6 +1148,32 @@ export default function Map() {
     }
   }, [antipodeMode, isMapLoaded])
 
+  // ─── Sync satellitesVisible into a ref + clear stale country hover ──────
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !isMapLoaded) return
+
+    const wasVisible = satellitesVisibleRef.current
+    satellitesVisibleRef.current = satellitesVisible
+
+    if (satellitesVisible && !wasVisible) {
+      // Country hover is gated off by the handlers below; clear any in-flight
+      // hover so the white-fill highlight + tooltip don't linger.
+      if (hoveredIdRef.current !== null) {
+        map.setFeatureState(
+          { source: 'countries', id: Number(hoveredIdRef.current) },
+          { hover: false },
+        )
+        hoveredIdRef.current = null
+      }
+      setTooltip({ visible: false, x: 0, y: 0, name: '', iso: '' })
+      map.getCanvas().style.cursor = ''
+    } else if (!satellitesVisible && wasVisible) {
+      // Cascade in the store cleared `satelliteHover`; reset the cursor too.
+      map.getCanvas().style.cursor = ''
+    }
+  }, [satellitesVisible, isMapLoaded, setTooltip])
+
   // ─── Sync globeMode ──────────────────────────────────────────────────────
   useEffect(() => {
     const map = mapRef.current
@@ -1067,6 +1223,28 @@ export default function Map() {
       })
       .catch((err) => console.error('Submarine cables fetch failed:', err))
   }, [submarineCablesVisible, isMapLoaded])
+
+  // ─── Satellite catalog fetch (one-shot per enable) ──────────────────────
+  // Names + intl designators for the full ~17k catalog. Without this, the WS
+  // path only carries NORAD numbers and the hover tooltip would fall back to
+  // "NORAD #X". Browser-cached via Cache-Control + ETag on the server.
+  useEffect(() => {
+    if (!satellitesVisible) return
+    if (useAtlasStore.getState().satelliteCatalog) return
+    const httpBase = import.meta.env.VITE_ORBIT_HTTP_URL
+    if (!httpBase) return
+    let cancelled = false
+    fetchSatelliteCatalog(httpBase)
+      .then((m) => {
+        if (!cancelled) setSatelliteCatalog(m)
+      })
+      .catch((err) => {
+        if (!cancelled) console.warn('[satellite-catalog] fetch failed:', err)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [satellitesVisible, setSatelliteCatalog])
 
   // ─── Satellite overlay ──────────────────────────────────────────────────
   useEffect(() => {
@@ -1172,6 +1350,51 @@ export default function Map() {
       endpointLayer.setData(event, latestPositionsByNoradRef.current)
     }
 
+    // Cyan halo follows the selected satellite's live position. Cheap — single
+    // vertex in/out per batch.
+    const refreshSelectedSatelliteOverlay = () => {
+      const layer = satSelectionLayerRef.current
+      if (!layer) return
+      const sel = selectedSatelliteRef.current
+      if (!sel) {
+        layer.setData(null)
+        return
+      }
+      const pos = latestPositionsByNoradRef.current.get(sel.norad)
+      layer.setData(pos ?? null)
+    }
+
+    // Closed-loop orbit ring, regenerated each batch using gstime(now) so it
+    // stays oriented to the current Earth-fixed frame (the ring rotates ~0.004°
+    // per second to track Earth rotation). 180 SGP4 propagations + geodetic
+    // conversions ≈ 1–2 ms — trivial.
+    const refreshSelectedSatelliteOrbit = () => {
+      const layer = satOrbitLayerRef.current
+      const satrec = selectedSatrecRef.current
+      if (!layer) return
+      if (!satrec) {
+        layer.setData(null)
+        return
+      }
+      const points = generateOrbitPoints(satrec, new Date())
+      layer.setData(points.length > 0 ? points : null)
+    }
+
+    // White hover ring tracks the currently-hovered sat's live position. Hidden
+    // when the hovered sat is also the selected one (cyan ring is enough).
+    const refreshHoveredSatelliteOverlay = () => {
+      const layer = satHoverLayerRef.current
+      if (!layer) return
+      const hover = useAtlasStore.getState().satelliteHover
+      const sel = selectedSatelliteRef.current
+      if (!hover.visible || (sel && sel.norad === hover.norad)) {
+        layer.setData(null)
+        return
+      }
+      const pos = latestPositionsByNoradRef.current.get(hover.norad)
+      layer.setData(pos ?? null)
+    }
+
     // Local SGP4 propagation — only writer for `fallback` mode.
     const startLocal = () => {
       const sats = satelliteTLERef.current
@@ -1183,6 +1406,9 @@ export default function Map() {
         const packed = packSatellitePositions(positions)
         satLayer.setData(packed.posBuffer, packed.metaBuffer, packed.count)
         refreshLivePairOverlay()
+        refreshSelectedSatelliteOverlay()
+        refreshSelectedSatelliteOrbit()
+        refreshHoveredSatelliteOverlay()
       }
       paint()
       satelliteIntervalRef.current = window.setInterval(paint, 200)
@@ -1270,6 +1496,9 @@ export default function Map() {
       const packed = packSatellitePositions(positions)
       satLayer.setData(packed.posBuffer, packed.metaBuffer, packed.count)
       refreshLivePairOverlay()
+      refreshSelectedSatelliteOverlay()
+      refreshSelectedSatelliteOrbit()
+      refreshHoveredSatelliteOverlay()
     }
 
     if (wsUrl) {
@@ -1420,6 +1649,101 @@ export default function Map() {
 
     map.easeTo({ center, zoom: 2.5, duration: 600 })
   }, [selectedConjunction])
+
+  // ─── Selected-satellite orbit + halo + camera fly-to ─────────────────────
+  // Resolves the satrec for the selected sat (bundled local first, HTTP TLE
+  // fallback) and stashes it on `selectedSatrecRef`. From there:
+  //   • the per-batch `refreshSelectedSatelliteOrbit` regenerates the closed
+  //     ring on every position batch (~1 Hz WS / 5 Hz local) so it stays
+  //     oriented to current Earth rotation;
+  //   • the per-batch `refreshSelectedSatelliteOverlay` keeps the cyan halo on
+  //     the live sub-point.
+  // This effect itself paints the orbit + halo *immediately* after satrec
+  // resolves (so click → halo latency is ~0, not "wait for next batch") and
+  // eases the camera to the satellite. It also clears all of the above on
+  // deselect / leaving globe mode.
+  useEffect(() => {
+    selectedSatelliteRef.current = selectedSatellite
+
+    const map = mapRef.current
+    if (!map || !isMapLoaded) return
+
+    const orbitLayer = satOrbitLayerRef.current
+    const selLayer = satSelectionLayerRef.current
+
+    if (!selectedSatellite || !globeMode) {
+      selectedSatrecRef.current = null
+      orbitLayer?.setData(null)
+      selLayer?.setData(null)
+      return
+    }
+
+    const norad = selectedSatellite.norad
+    let cancelled = false
+
+    const apply = (satrec: SatRec) => {
+      if (cancelled) return
+      selectedSatrecRef.current = satrec
+
+      // Initial paint — don't wait for the next position batch.
+      const points = generateOrbitPoints(satrec, new Date())
+      orbitLayer?.setData(points.length > 0 ? points : null)
+      const live = latestPositionsByNoradRef.current.get(norad)
+      selLayer?.setData(live ?? null)
+
+      const center: [number, number] | null = live
+        ? [live.lng, live.lat]
+        : points.length > 0
+          ? [points[0].lng, points[0].lat]
+          : null
+      if (center) map.easeTo({ center, zoom: 2.5, duration: 600 })
+    }
+
+    // Local-fallback path: bundled satrec already in memory. Use it directly
+    // to avoid a needless HTTP roundtrip when the user clicks a bundled sat.
+    const local = satelliteTLERef.current?.find(
+      (s) => parseInt(s.satrec.satnum, 10) === norad,
+    )
+    if (local) {
+      apply(local.satrec)
+      return () => {
+        cancelled = true
+      }
+    }
+
+    const httpBase = import.meta.env.VITE_ORBIT_HTTP_URL
+    if (!httpBase) {
+      // Server unavailable + sat not in bundled — orbit can't be drawn.
+      selectedSatrecRef.current = null
+      orbitLayer?.setData(null)
+      return () => {
+        cancelled = true
+      }
+    }
+
+    fetchSatelliteTLE(httpBase, norad)
+      .then((tle) => {
+        if (cancelled) return
+        let satrec: SatRec
+        try {
+          satrec = twoline2satrec(tle.tle1, tle.tle2)
+        } catch {
+          return
+        }
+        apply(satrec)
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          console.warn('[satellite-orbit] TLE fetch failed:', err)
+          selectedSatrecRef.current = null
+          orbitLayer?.setData(null)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [selectedSatellite, globeMode, isMapLoaded])
 
   // ─── Terminator overlay ──────────────────────────────────────────────────
   useEffect(() => {

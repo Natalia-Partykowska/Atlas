@@ -2,6 +2,7 @@
 
 interface ImportMetaEnv {
   readonly VITE_ORBIT_WS_URL?: string
+  readonly VITE_ORBIT_HTTP_URL?: string
 }
 
 interface ImportMeta {

@@ -41,6 +41,9 @@ pub struct CatalogEntry {
     pub epoch: DateTime<Utc>,
     pub perigee_km: f32,
     pub apogee_km: f32,
+    pub line1: String,
+    pub line2: String,
+    pub intl_designator: String,
 }
 
 pub struct Catalog {
@@ -117,7 +120,7 @@ pub async fn load() -> Result<Catalog> {
     })
 }
 
-fn build_entry(raw: &RawEntry, group: Group) -> Result<CatalogEntry> {
+pub(crate) fn build_entry(raw: &RawEntry, group: Group) -> Result<CatalogEntry> {
     let elements = sgp4::Elements::from_tle(
         Some(raw.name.clone()),
         raw.line1.as_bytes(),
@@ -134,6 +137,12 @@ fn build_entry(raw: &RawEntry, group: Group) -> Result<CatalogEntry> {
     let (perigee_km, apogee_km) = compute_apsides(mean_motion_rev_per_day, eccentricity)
         .context("nonsensical apsides")?;
 
+    let intl_designator = raw
+        .line1
+        .get(9..17)
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+
     Ok(CatalogEntry {
         norad_id,
         name: raw.name.clone(),
@@ -142,6 +151,9 @@ fn build_entry(raw: &RawEntry, group: Group) -> Result<CatalogEntry> {
         epoch,
         perigee_km,
         apogee_km,
+        line1: raw.line1.clone(),
+        line2: raw.line2.clone(),
+        intl_designator,
     })
 }
 

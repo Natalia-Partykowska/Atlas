@@ -1,6 +1,21 @@
 import { create } from 'zustand'
-import type { AtlasState, TooltipState, LayerId, CountryDataMap } from '@/types/atlas'
+import type {
+  AtlasState,
+  TooltipState,
+  LayerId,
+  CountryDataMap,
+  SatelliteHoverState,
+} from '@/types/atlas'
 import type { ConjunctionEvent } from '@/lib/orbitStream'
+import type { SatelliteCatalogEntry } from '@/lib/satelliteCatalog'
+
+const EMPTY_SATELLITE_HOVER: SatelliteHoverState = {
+  visible: false,
+  x: 0,
+  y: 0,
+  norad: 0,
+  name: '',
+}
 
 export const useAtlasStore = create<AtlasState>((set, get) => ({
   tooltip: { visible: false, x: 0, y: 0, name: '', iso: '' },
@@ -17,6 +32,9 @@ export const useAtlasStore = create<AtlasState>((set, get) => ({
   conjunctionEvents: [],
   selectedConjunction: null,
   conjunctionsReceivedFirstBatch: false,
+  satelliteCatalog: null,
+  satelliteHover: EMPTY_SATELLITE_HOVER,
+  selectedSatellite: null,
   terminatorVisible: false,
   auroraVisible: false,
   auroraKp: 2,
@@ -38,6 +56,7 @@ export const useAtlasStore = create<AtlasState>((set, get) => ({
   setSubmarineCablesVisible: (on: boolean) =>
     set({ submarineCablesVisible: on }),
   // Disabling satellites cascades conjunctions off and clears their state.
+  // Catalog + hover + selection are also cleared so a re-enable starts fresh.
   setSatellitesVisible: (on: boolean) =>
     set(
       on
@@ -48,6 +67,9 @@ export const useAtlasStore = create<AtlasState>((set, get) => ({
             conjunctionEvents: [],
             selectedConjunction: null,
             conjunctionsReceivedFirstBatch: false,
+            satelliteCatalog: null,
+            satelliteHover: EMPTY_SATELLITE_HOVER,
+            selectedSatellite: null,
           },
     ),
   // Enabling conjunctions force-enables globe + satellites; disabling clears state.
@@ -91,7 +113,25 @@ export const useAtlasStore = create<AtlasState>((set, get) => ({
       set({ conjunctionEvents: events, conjunctionsReceivedFirstBatch: true })
     }
   },
-  setSelectedConjunction: (selectedConjunction) => set({ selectedConjunction }),
+  // Selecting a conjunction clears any in-flight satellite selection (mutually
+  // exclusive — one drawer at a time, one camera target at a time).
+  setSelectedConjunction: (selectedConjunction) =>
+    set(
+      selectedConjunction
+        ? { selectedConjunction, selectedSatellite: null }
+        : { selectedConjunction: null },
+    ),
+  setSatelliteCatalog: (satelliteCatalog: Map<number, SatelliteCatalogEntry> | null) =>
+    set({ satelliteCatalog }),
+  setSatelliteHover: (satelliteHover: SatelliteHoverState) => set({ satelliteHover }),
+  // Selecting a satellite clears any in-flight conjunction selection (mutually
+  // exclusive — see setSelectedConjunction).
+  setSelectedSatellite: (selectedSatellite) =>
+    set(
+      selectedSatellite
+        ? { selectedSatellite, selectedConjunction: null }
+        : { selectedSatellite: null },
+    ),
   // Overlay toggles — switching on also moves to base layer
   setTerminatorVisible: (on: boolean) =>
     set(on ? { terminatorVisible: true, activeLayerId: 'base' } : { terminatorVisible: false }),
