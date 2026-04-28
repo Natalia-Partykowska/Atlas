@@ -29,14 +29,14 @@ describe('LayerSwitcher rendering', () => {
     useAtlasStore.setState({ activeLayerId: 'gdp' })
     render(<LayerSwitcher />)
     const gdpBtn = screen.getByRole('button', { name: /GDP per Capita/i })
-    expect(gdpBtn.className).toContain('bg-white/10')
+    expect(gdpBtn.className).toContain('border-white/30')
   })
 
   it('inactive layer buttons do not have the active class', () => {
     useAtlasStore.setState({ activeLayerId: 'base' })
     render(<LayerSwitcher />)
     const gdpBtn = screen.getByRole('button', { name: /GDP per Capita/i })
-    expect(gdpBtn.className).not.toContain('bg-white/10')
+    expect(gdpBtn.className).not.toContain('border-white/30')
   })
 })
 

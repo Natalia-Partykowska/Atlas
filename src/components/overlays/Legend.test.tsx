@@ -8,6 +8,7 @@ beforeEach(() => {
   useAtlasStore.setState({
     activeLayerId: 'base',
     layerData: null,
+    tooltip: { visible: false, x: 0, y: 0, name: '', iso: '' },
   })
 })
 
@@ -75,6 +76,74 @@ describe('Legend — renders correctly', () => {
     expect(bar).not.toBeNull()
     expect(bar.style.background).toContain('#0d2a4a') // GDP colorLow
     expect(bar.style.background).toContain('#06b6d4') // GDP colorHigh
+  })
+})
+
+describe('Legend — hover tick coupling', () => {
+  beforeEach(() => {
+    useAtlasStore.setState({
+      activeLayerId: 'gdp',
+      layerData: { USA: 60000, IND: 8000, NOR: 90000 }, // min=8000, max=90000
+    })
+  })
+
+  it('does not render a tick when no country is hovered', () => {
+    render(<Legend />)
+    expect(screen.queryByTestId('legend-hover-tick')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('legend-hover-value')).not.toBeInTheDocument()
+  })
+
+  it('does not render a tick when the hovered country has no value', () => {
+    useAtlasStore.setState({
+      tooltip: { visible: true, x: 0, y: 0, name: 'France', iso: 'FRA' },
+    })
+    render(<Legend />)
+    expect(screen.queryByTestId('legend-hover-tick')).not.toBeInTheDocument()
+  })
+
+  it('renders a tick at the right proportional position when the hovered country has a value', () => {
+    useAtlasStore.setState({
+      tooltip: { visible: true, x: 0, y: 0, name: 'United States', iso: 'USA' },
+    })
+    render(<Legend />)
+    const tick = screen.getByTestId('legend-hover-tick')
+    // value=60000, min=8000, max=90000 → (60000-8000)/(90000-8000) = 52000/82000 ≈ 63.41%
+    expect(tick.style.left).toMatch(/^63\.\d+%$/)
+  })
+
+  it('places the tick at 0% when the hovered country equals the min', () => {
+    useAtlasStore.setState({
+      tooltip: { visible: true, x: 0, y: 0, name: 'India', iso: 'IND' },
+    })
+    render(<Legend />)
+    const tick = screen.getByTestId('legend-hover-tick')
+    expect(tick.style.left).toBe('0%')
+  })
+
+  it('places the tick at 100% when the hovered country equals the max', () => {
+    useAtlasStore.setState({
+      tooltip: { visible: true, x: 0, y: 0, name: 'Norway', iso: 'NOR' },
+    })
+    render(<Legend />)
+    const tick = screen.getByTestId('legend-hover-tick')
+    expect(tick.style.left).toBe('100%')
+  })
+
+  it('renders the formatted hover value badge alongside the tick', () => {
+    useAtlasStore.setState({
+      tooltip: { visible: true, x: 0, y: 0, name: 'United States', iso: 'USA' },
+    })
+    render(<Legend />)
+    const badge = screen.getByTestId('legend-hover-value')
+    expect(badge.textContent).toBe('$60k')
+  })
+
+  it('does not render a tick when tooltip is not visible even if iso has data', () => {
+    useAtlasStore.setState({
+      tooltip: { visible: false, x: 0, y: 0, name: 'United States', iso: 'USA' },
+    })
+    render(<Legend />)
+    expect(screen.queryByTestId('legend-hover-tick')).not.toBeInTheDocument()
   })
 })
 

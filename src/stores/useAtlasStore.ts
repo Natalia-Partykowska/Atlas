@@ -28,6 +28,7 @@ export const useAtlasStore = create<AtlasState>((set, get) => ({
   globeMode: false,
   submarineCablesVisible: false,
   satellitesVisible: false,
+  satelliteCount: 0,
   conjunctionsVisible: false,
   conjunctionEvents: [],
   selectedConjunction: null,
@@ -63,6 +64,7 @@ export const useAtlasStore = create<AtlasState>((set, get) => ({
         ? { satellitesVisible: true }
         : {
             satellitesVisible: false,
+            satelliteCount: 0,
             conjunctionsVisible: false,
             conjunctionEvents: [],
             selectedConjunction: null,
@@ -72,6 +74,7 @@ export const useAtlasStore = create<AtlasState>((set, get) => ({
             selectedSatellite: null,
           },
     ),
+  setSatelliteCount: (satelliteCount: number) => set({ satelliteCount }),
   // Enabling conjunctions force-enables globe + satellites; disabling clears state.
   // Either transition resets the "received first batch" flag so the drawer shows
   // a fresh "Loading…" until the next 0.1 Hz tick lands.

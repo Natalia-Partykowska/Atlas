@@ -52,6 +52,10 @@ export interface AtlasState {
   globeMode: boolean
   submarineCablesVisible: boolean
   satellitesVisible: boolean
+  // Live count of satellites in the most recent position frame (WS or local
+  // fallback). Reset to 0 when the satellite layer is disabled or the WS
+  // mode goes idle. Surfaced in the top-left BrandStrip live readout.
+  satelliteCount: number
   conjunctionsVisible: boolean
   conjunctionEvents: ConjunctionEvent[]
   selectedConjunction: { noradA: number; noradB: number } | null
@@ -77,6 +81,7 @@ export interface AtlasState {
   setGlobeMode: (on: boolean) => void
   setSubmarineCablesVisible: (on: boolean) => void
   setSatellitesVisible: (on: boolean) => void
+  setSatelliteCount: (n: number) => void
   setConjunctionsVisible: (on: boolean) => void
   setConjunctionEvents: (events: ConjunctionEvent[]) => void
   setSelectedConjunction: (sel: { noradA: number; noradB: number } | null) => void

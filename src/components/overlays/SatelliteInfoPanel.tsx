@@ -141,8 +141,9 @@ export default function SatelliteInfoPanel() {
       aria-label="Satellite details"
       className={[
         'fixed top-0 right-0 h-full z-40 flex flex-col',
-        'bg-black/60 backdrop-blur-md border-l border-white/10',
-        'transition-transform ease-out shadow-2xl',
+        'bg-[#0B1220]/70 backdrop-blur-xl border-l border-white/[0.08]',
+        'transition-transform ease-out',
+        'shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_25px_50px_-12px_rgba(0,0,0,0.5)]',
         isOpen ? 'translate-x-0' : 'translate-x-full pointer-events-none',
       ].join(' ')}
       style={{ width: `${DRAWER_WIDTH_PX}px`, transitionDuration: `${TRANSITION_MS}ms` }}
@@ -180,7 +181,7 @@ export default function SatelliteInfoPanel() {
             />
             <span className="text-white/85 capitalize">{group ?? 'Unknown group'}</span>
           </div>
-          <div className="mt-1 text-xs text-white/55 tabular-nums">
+          <div className="mt-1 text-xs text-white/55 font-mono tabular-nums">
             NORAD #{norad}
             {intlDesignator ? <> · {intlDesignator}</> : null}
           </div>
@@ -204,15 +205,15 @@ export default function SatelliteInfoPanel() {
             <div className="text-xs text-white/65 tabular-nums space-y-1">
               <div className="flex justify-between">
                 <span>Latitude</span>
-                <span className="text-white/90">{live.lat.toFixed(2)}°</span>
+                <span className="text-white/90 font-mono">{live.lat.toFixed(2)}°</span>
               </div>
               <div className="flex justify-between">
                 <span>Longitude</span>
-                <span className="text-white/90">{live.lng.toFixed(2)}°</span>
+                <span className="text-white/90 font-mono">{live.lng.toFixed(2)}°</span>
               </div>
               <div className="flex justify-between">
                 <span>Altitude</span>
-                <span className="text-white/90">{live.altKm.toFixed(0)} km</span>
+                <span className="text-white/90 font-mono">{live.altKm.toFixed(0)} km</span>
               </div>
             </div>
           ) : (
@@ -225,7 +226,7 @@ export default function SatelliteInfoPanel() {
             Velocity
           </div>
           {live ? (
-            <div className="text-sm text-white/90 tabular-nums">
+            <div className="text-sm text-white/90 font-mono tabular-nums">
               {live.vKms.toFixed(2)}{' '}
               <span className="text-white/45 text-xs">km/s</span>
             </div>
@@ -242,23 +243,23 @@ export default function SatelliteInfoPanel() {
             <div className="text-xs text-white/65 tabular-nums space-y-1">
               <div className="flex justify-between">
                 <span>Period</span>
-                <span className="text-white/90">
+                <span className="text-white/90 font-mono">
                   {periodMinutes(satrec.no).toFixed(1)} min
                 </span>
               </div>
               <div className="flex justify-between">
                 <span>Inclination</span>
-                <span className="text-white/90">
+                <span className="text-white/90 font-mono">
                   {inclinationDegrees(satrec.inclo).toFixed(2)}°
                 </span>
               </div>
               <div className="flex justify-between">
                 <span>Perigee</span>
-                <span className="text-white/90">{apsides.perigeeKm.toFixed(0)} km</span>
+                <span className="text-white/90 font-mono">{apsides.perigeeKm.toFixed(0)} km</span>
               </div>
               <div className="flex justify-between">
                 <span>Apogee</span>
-                <span className="text-white/90">{apsides.apogeeKm.toFixed(0)} km</span>
+                <span className="text-white/90 font-mono">{apsides.apogeeKm.toFixed(0)} km</span>
               </div>
             </div>
           ) : (
