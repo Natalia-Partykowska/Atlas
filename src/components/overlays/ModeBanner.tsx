@@ -51,7 +51,7 @@ export default function ModeBanner() {
       aria-hidden={!isOpen}
       role="status"
       className={[
-        'fixed top-4 left-1/2 z-40 -translate-x-1/2 pointer-events-none',
+        'fixed top-4 left-1/2 z-40 -translate-x-1/2 pointer-events-none [&_*]:pointer-events-none',
         'transition-transform duration-200 ease-out',
         isOpen ? 'translate-y-0' : '-translate-y-[200%]',
       ].join(' ')}

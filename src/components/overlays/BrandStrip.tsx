@@ -17,7 +17,7 @@ export default function BrandStrip() {
   const hasStatus = satsLive || kpLive
 
   return (
-    <div className="fixed top-4 left-4 z-40 select-none pointer-events-none">
+    <div className="fixed top-4 left-4 z-40 select-none pointer-events-none [&_*]:pointer-events-none">
       {/* Brand mark + wordmark */}
       <div className="flex items-center gap-2 text-white/90">
         <svg
