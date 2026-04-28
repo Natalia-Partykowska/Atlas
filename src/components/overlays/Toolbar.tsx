@@ -29,6 +29,14 @@ function ToolBtn({
   )
 }
 
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="text-[10px] uppercase tracking-wider text-white/35 font-medium px-3">
+      {children}
+    </div>
+  )
+}
+
 export default function Toolbar() {
   const compareMode = useAtlasStore((s) => s.compareMode)
   const measureMode = useAtlasStore((s) => s.measureMode)
@@ -53,38 +61,39 @@ export default function Toolbar() {
   const auroraDataUnavailable = useAtlasStore((s) => s.auroraDataUnavailable)
 
   return (
-    <div className="fixed top-4 right-4 z-40 flex flex-col items-end gap-2">
-      {/* Interactive tools — mutually exclusive */}
-      <div className="flex flex-col gap-1.5 w-36">
-        <ToolBtn
-          label="Measure"
-          active={measureMode}
-          onClick={() => setMeasureMode(!measureMode)}
-          title="Measure true great-circle distance vs Mercator straight line"
-        />
-        {!globeMode && (
+    <div className="fixed top-4 right-4 z-40 flex flex-col items-end gap-2 w-36">
+      {/* Tools — mutually exclusive interactive modes */}
+      <div className="flex flex-col gap-1 w-full">
+        <SectionLabel>Tools</SectionLabel>
+        <div className="flex flex-col gap-1.5">
           <ToolBtn
-            label="Compare Sizes"
-            active={compareMode}
-            onClick={() => setCompareMode(!compareMode)}
-            title="Drag country outlines to compare sizes (Mercator distortion)"
+            label="Measure"
+            active={measureMode}
+            onClick={() => setMeasureMode(!measureMode)}
+            title="Measure true great-circle distance vs Mercator straight line"
           />
-        )}
-        <ToolBtn
-          label="Antipodes"
-          active={antipodeMode}
-          onClick={() => setAntipodeMode(!antipodeMode)}
-          title="Click anywhere to see its exact opposite point on Earth"
-        />
+          {!globeMode && (
+            <ToolBtn
+              label="Compare Sizes"
+              active={compareMode}
+              onClick={() => setCompareMode(!compareMode)}
+              title="Drag country outlines to compare sizes (Mercator distortion)"
+            />
+          )}
+          <ToolBtn
+            label="Antipodes"
+            active={antipodeMode}
+            onClick={() => setAntipodeMode(!antipodeMode)}
+            title="Click anywhere to see its exact opposite point on Earth"
+          />
+        </div>
       </div>
 
-      {/* Divider */}
-      <div className="w-36 border-t border-white/10" />
-
-      {/* Globe-exclusive features */}
+      {/* Orbital — globe-exclusive */}
       {globeMode && (
-        <>
-          <div className="flex flex-col gap-1.5 w-36">
+        <div className="flex flex-col gap-1 w-full">
+          <SectionLabel>Orbital</SectionLabel>
+          <div className="flex flex-col gap-1.5">
             <ToolBtn
               label="Sea Cables"
               active={submarineCablesVisible}
@@ -106,36 +115,39 @@ export default function Toolbar() {
               />
             )}
           </div>
-        </>
+        </div>
       )}
 
-      {/* Ambient overlays — stackable */}
-      <div className="flex flex-col gap-1.5 w-36">
-        <ToolBtn
-          label="Day/Night"
-          active={terminatorVisible}
-          onClick={() => setTerminatorVisible(!terminatorVisible)}
-          title="Show real-time solar day/night terminator"
-        />
-        <div className="relative">
+      {/* Overlays — stackable ambient layers */}
+      <div className="flex flex-col gap-1 w-full">
+        <SectionLabel>Overlays</SectionLabel>
+        <div className="flex flex-col gap-1.5">
           <ToolBtn
-            label="Aurora"
-            active={auroraVisible}
-            onClick={() => setAuroraVisible(!auroraVisible)}
-            title="Show aurora borealis/australis based on real-time NOAA Kp index"
+            label="Day/Night"
+            active={terminatorVisible}
+            onClick={() => setTerminatorVisible(!terminatorVisible)}
+            title="Show real-time solar day/night terminator"
           />
-          {auroraVisible && (
-            <div className="mt-1 flex items-center gap-1.5 px-1">
-              <div
-                className="w-2 h-2 rounded-full"
-                style={{ background: kpColor(auroraKp) }}
-              />
-              <span className="text-[10px] text-white/50 font-mono tabular-nums">
-                Kp {auroraKp.toFixed(1)} — {auroraLabel}
-                {auroraDataUnavailable && ' (offline)'}
-              </span>
-            </div>
-          )}
+          <div className="relative">
+            <ToolBtn
+              label="Aurora"
+              active={auroraVisible}
+              onClick={() => setAuroraVisible(!auroraVisible)}
+              title="Show aurora borealis/australis based on real-time NOAA Kp index"
+            />
+            {auroraVisible && (
+              <div className="mt-1 flex items-center gap-1.5 px-1">
+                <div
+                  className="w-2 h-2 rounded-full"
+                  style={{ background: kpColor(auroraKp) }}
+                />
+                <span className="text-[10px] text-white/50 font-mono tabular-nums">
+                  Kp {auroraKp.toFixed(1)} — {auroraLabel}
+                  {auroraDataUnavailable && ' (offline)'}
+                </span>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
