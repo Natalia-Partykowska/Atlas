@@ -1,5 +1,6 @@
 import { useAtlasStore } from '@/stores/useAtlasStore'
 import { LAYER_MAP } from '@/data/layers.config'
+import { countryRank, formatRank } from '@/lib/countryRank'
 
 export default function Tooltip() {
   const tooltip = useAtlasStore((s) => s.tooltip)
@@ -10,6 +11,7 @@ export default function Tooltip() {
   const layer = LAYER_MAP[activeLayerId]
   const value = layerData?.[tooltip.iso]
   const formattedValue = value !== undefined && layer ? layer.format(value) : null
+  const rank = countryRank(layerData, tooltip.iso)
 
   return (
     <>
@@ -20,7 +22,15 @@ export default function Tooltip() {
         >
           <div className="font-medium">{tooltip.name}</div>
           {formattedValue !== null && (
-            <div className="text-xs text-white/60 font-mono tabular-nums mt-0.5">{formattedValue}</div>
+            <div className="text-xs text-white/60 font-mono tabular-nums mt-0.5">
+              {formattedValue}
+              {rank && (
+                <span className="text-white/35">
+                  {' · '}
+                  {formatRank(rank.rank, rank.total)}
+                </span>
+              )}
+            </div>
           )}
         </div>
       )}
