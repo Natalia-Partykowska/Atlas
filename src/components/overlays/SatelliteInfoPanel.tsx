@@ -141,8 +141,9 @@ export default function SatelliteInfoPanel() {
       aria-label="Satellite details"
       className={[
         'fixed top-0 right-0 h-full z-40 flex flex-col',
-        'bg-black/60 backdrop-blur-md border-l border-white/10',
-        'transition-transform ease-out shadow-2xl',
+        'bg-[#0B1220]/70 backdrop-blur-xl border-l border-white/[0.08]',
+        'transition-transform ease-out',
+        'shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_25px_50px_-12px_rgba(0,0,0,0.5)]',
         isOpen ? 'translate-x-0' : 'translate-x-full pointer-events-none',
       ].join(' ')}
       style={{ width: `${DRAWER_WIDTH_PX}px`, transitionDuration: `${TRANSITION_MS}ms` }}

@@ -15,7 +15,7 @@ export default function Legend() {
   const max = Math.max(...values)
 
   return (
-    <div className="fixed bottom-8 left-4 z-40 w-48">
+    <div className="fixed bottom-8 left-4 z-40 w-48 px-3 py-2.5 rounded-lg bg-[#0B1220]/40 border border-white/[0.08] backdrop-blur-sm shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
       <p className="text-white/80 text-xs font-semibold mb-1.5">{layer.label}</p>
 
       {/* Gradient bar */}

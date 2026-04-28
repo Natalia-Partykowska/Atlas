@@ -1825,7 +1825,7 @@ export default function Map() {
       <DistanceLabel info={measureInfo} mapRef={mapRef} />
       <AntipodeLabel info={antipodeInfo} mapRef={mapRef} />
       {/* Projection pill toggle — bottom-center */}
-      <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-10 flex rounded-lg border border-white/15 bg-black/50 backdrop-blur-sm overflow-hidden">
+      <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-10 flex rounded-lg border border-white/[0.12] bg-[#0B1220]/55 backdrop-blur-sm overflow-hidden shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
         {(['Flat', 'Globe'] as const).map((label) => {
           const active = label === 'Globe' ? globeMode : !globeMode
           return (
@@ -1835,7 +1835,7 @@ export default function Map() {
               className={[
                 'px-4 py-1.5 text-xs font-medium transition-all duration-200',
                 active
-                  ? 'bg-white/15 text-white'
+                  ? 'bg-white/[0.12] text-white shadow-[0_0_14px_-6px_rgba(255,255,255,0.20)]'
                   : 'text-white/45 hover:text-white/75 hover:bg-white/5',
               ].join(' ')}
             >
@@ -1850,7 +1850,7 @@ export default function Map() {
             const m = mapRef.current
             if (m) m.easeTo({ zoom: Math.min(m.getMaxZoom(), m.getZoom() + 2.0), duration: 300 })
           }}
-          className="w-8 h-8 bg-black/50 border border-white/15 text-white/80 rounded text-lg leading-none hover:bg-white/10 transition-colors"
+          className="w-8 h-8 bg-[#0B1220]/55 border border-white/[0.12] text-white/80 rounded text-lg leading-none hover:bg-white/10 transition-colors shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
           aria-label="Zoom in"
         >+</button>
         <button
@@ -1858,7 +1858,7 @@ export default function Map() {
             const m = mapRef.current
             if (m) m.easeTo({ zoom: Math.max(m.getMinZoom(), m.getZoom() - 2.0), duration: 300 })
           }}
-          className="w-8 h-8 bg-black/50 border border-white/15 text-white/80 rounded text-lg leading-none hover:bg-white/10 transition-colors"
+          className="w-8 h-8 bg-[#0B1220]/55 border border-white/[0.12] text-white/80 rounded text-lg leading-none hover:bg-white/10 transition-colors shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
           aria-label="Zoom out"
         >–</button>
       </div>

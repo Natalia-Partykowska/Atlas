@@ -29,11 +29,11 @@ export default function LayerSwitcher() {
             }}
             title={layer.description}
             className={[
-              'text-left px-3 py-2 rounded-lg text-xs font-medium transition-all duration-200',
+              'relative text-left px-3 py-2 rounded-lg text-xs font-medium transition-all duration-200',
               'border backdrop-blur-sm',
               isActive
-                ? 'bg-white/10 border-white/30 text-white shadow-lg'
-                : 'bg-black/30 border-white/10 text-white/50 hover:bg-white/5 hover:border-white/20 hover:text-white/80',
+                ? 'bg-white/[0.08] border-white/30 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.10),0_0_14px_-6px_rgba(255,255,255,0.18)] before:absolute before:left-0 before:top-2 before:bottom-2 before:w-[2px] before:rounded-full before:bg-white/70 before:shadow-[0_0_4px_rgba(255,255,255,0.3)]'
+                : 'bg-[#0B1220]/40 border-white/[0.08] text-white/50 hover:bg-white/5 hover:border-white/20 hover:text-white/80 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]',
             ].join(' ')}
           >
             {layer.label}

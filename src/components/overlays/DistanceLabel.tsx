@@ -59,7 +59,7 @@ export default function DistanceLabel({ info, mapRef }: Props) {
         transform: 'translate(-50%, -110%)',
       }}
     >
-      <div className="bg-black/70 border border-white/15 backdrop-blur-sm rounded-lg px-3 py-2 text-xs text-white/90 shadow-xl min-w-[180px]">
+      <div className="bg-[#0B1220]/75 border border-white/[0.08] backdrop-blur-sm rounded-lg px-3 py-2 text-xs text-white/90 shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_10px_25px_-8px_rgba(0,0,0,0.6)] min-w-[180px]">
         <div className="flex items-center gap-1.5 mb-1.5">
           <div className="w-3 h-0.5 bg-blue-400 rounded" />
           <span className="text-white/60">Great circle</span>
