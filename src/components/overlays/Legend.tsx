@@ -28,8 +28,8 @@ export default function Legend() {
 
       {/* Min / Max labels */}
       <div className="flex justify-between mt-1">
-        <span className="text-white/50 text-[10px]">{layer.format(min)}</span>
-        <span className="text-white/50 text-[10px]">{layer.format(max)}</span>
+        <span className="text-white/50 text-[10px] font-mono tabular-nums">{layer.format(min)}</span>
+        <span className="text-white/50 text-[10px] font-mono tabular-nums">{layer.format(max)}</span>
       </div>
 
       <p className="text-white/30 text-[10px] mt-1 leading-tight">{layer.description}</p>

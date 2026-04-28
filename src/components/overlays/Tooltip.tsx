@@ -20,7 +20,7 @@ export default function Tooltip() {
         >
           <div className="font-medium">{tooltip.name}</div>
           {formattedValue !== null && (
-            <div className="text-xs text-white/60 mt-0.5">{formattedValue}</div>
+            <div className="text-xs text-white/60 font-mono tabular-nums mt-0.5">{formattedValue}</div>
           )}
         </div>
       )}
@@ -29,7 +29,7 @@ export default function Tooltip() {
           className="fixed z-50 pointer-events-none bg-[#0B1220]/85 backdrop-blur-sm border border-white/[0.08] rounded-md px-2.5 py-1.5 text-xs text-[#F1F5F9] shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_8px_20px_-6px_rgba(0,0,0,0.6)]"
           style={{ left: satelliteHover.x + 14, top: satelliteHover.y - 10 }}
         >
-          <div className="font-medium tabular-nums">{satelliteHover.name}</div>
+          <div className="font-medium font-mono tabular-nums">{satelliteHover.name}</div>
         </div>
       )}
     </>

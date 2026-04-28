@@ -141,16 +141,16 @@ export default function ConjunctionPanel() {
                           : 'hover:bg-white/5',
                       ].join(' ')}
                     >
-                      <div className="text-white/90 text-sm font-medium tabular-nums">
+                      <div className="text-white/90 text-sm font-medium font-mono tabular-nums">
                         #{e.noradA} ↔ #{e.noradB}
                       </div>
-                      <div className="text-white/55 text-xs mt-0.5 tabular-nums">
+                      <div className="text-white/55 text-xs mt-0.5 font-mono tabular-nums">
                         miss {e.missKm.toFixed(2)} km · Δv{' '}
                         {e.relVelKms.toFixed(1)} km/s
                       </div>
                       <div
                         className={[
-                          'text-xs mt-1 tabular-nums',
+                          'text-xs mt-1 font-mono tabular-nums',
                           dt < 5 * 60 * 1000 ? 'text-red-300' : 'text-white/45',
                         ].join(' ')}
                       >

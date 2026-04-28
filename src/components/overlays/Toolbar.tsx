@@ -130,7 +130,7 @@ export default function Toolbar() {
                 className="w-2 h-2 rounded-full"
                 style={{ background: kpColor(auroraKp) }}
               />
-              <span className="text-[10px] text-white/50">
+              <span className="text-[10px] text-white/50 font-mono tabular-nums">
                 Kp {auroraKp.toFixed(1)} — {auroraLabel}
                 {auroraDataUnavailable && ' (offline)'}
               </span>

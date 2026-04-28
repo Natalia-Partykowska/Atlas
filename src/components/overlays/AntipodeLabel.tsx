@@ -49,7 +49,7 @@ export default function AntipodeLabel({ info, mapRef }: Props) {
       <div className="bg-[#0B1220]/75 border border-white/[0.08] backdrop-blur-sm rounded-lg px-3 py-2 text-xs text-white/90 shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_10px_25px_-8px_rgba(0,0,0,0.6)] min-w-[200px]">
         <div className="text-white/50 mb-1 text-[10px] uppercase tracking-wider">Antipode</div>
         <div className="font-medium text-orange-400 mb-1">{info.label}</div>
-        <div className="text-white/40 text-[10px] leading-relaxed">
+        <div className="text-white/40 text-[10px] leading-relaxed font-mono tabular-nums">
           <div>
             Origin: {oLat.toFixed(2)}°, {oLng.toFixed(2)}°
           </div>

@@ -63,7 +63,7 @@ export default function DistanceLabel({ info, mapRef }: Props) {
         <div className="flex items-center gap-1.5 mb-1.5">
           <div className="w-3 h-0.5 bg-blue-400 rounded" />
           <span className="text-white/60">Great circle</span>
-          <span className="ml-auto font-semibold text-white">
+          <span className="ml-auto font-semibold text-white font-mono tabular-nums">
             {distKm} km
           </span>
         </div>
@@ -75,15 +75,18 @@ export default function DistanceLabel({ info, mapRef }: Props) {
             }}
           />
           <span className="text-white/60">Mercator line</span>
-          <span className="ml-auto text-white/70">{rhumbKm} km</span>
+          <span className="ml-auto text-white/70 font-mono tabular-nums">{rhumbKm} km</span>
         </div>
         <div className="border-t border-white/10 pt-1.5 flex justify-between text-white/50">
           <span>Distortion</span>
-          <span className={info.rhumbKm > info.distanceKm ? 'text-amber-400' : 'text-green-400'}>
+          <span className={[
+            'font-mono tabular-nums',
+            info.rhumbKm > info.distanceKm ? 'text-amber-400' : 'text-green-400',
+          ].join(' ')}>
             {distortionSign}{distortionPct}%
           </span>
         </div>
-        <div className="text-white/30 text-[10px] mt-0.5">{distMi} mi</div>
+        <div className="text-white/30 text-[10px] font-mono tabular-nums mt-0.5">{distMi} mi</div>
       </div>
     </div>
   )
