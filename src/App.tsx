@@ -5,11 +5,13 @@ import Legend from '@/components/overlays/Legend'
 import Toolbar from '@/components/overlays/Toolbar'
 import ConjunctionPanel from '@/components/overlays/ConjunctionPanel'
 import SatelliteInfoPanel from '@/components/overlays/SatelliteInfoPanel'
+import BrandStrip from '@/components/overlays/BrandStrip'
 
 export default function App() {
   return (
     <div className="w-full h-full relative bg-[#080B12]">
       <Map />
+      <BrandStrip />
       <LayerSwitcher />
       <Legend />
       <Tooltip />

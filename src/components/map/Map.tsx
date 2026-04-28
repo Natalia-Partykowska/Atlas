@@ -154,6 +154,7 @@ export default function Map() {
   const setSelectedConjunction = useAtlasStore((s) => s.setSelectedConjunction)
   const setSatelliteCatalog = useAtlasStore((s) => s.setSatelliteCatalog)
   const setSatelliteHover = useAtlasStore((s) => s.setSatelliteHover)
+  const setSatelliteCount = useAtlasStore((s) => s.setSatelliteCount)
   const selectedSatellite = useAtlasStore((s) => s.selectedSatellite)
   const terminatorVisible = useAtlasStore((s) => s.terminatorVisible)
   const setTerminatorVisible = useAtlasStore((s) => s.setTerminatorVisible)
@@ -1258,6 +1259,7 @@ export default function Map() {
     if (!satellitesVisible || !globeMode) {
       satLayer.clear()
       trailSrc.setData(EMPTY_FEATURE_COLLECTION)
+      setSatelliteCount(0)
       if (satelliteIntervalRef.current !== null) {
         clearInterval(satelliteIntervalRef.current)
         satelliteIntervalRef.current = null
@@ -1405,6 +1407,7 @@ export default function Map() {
         refreshLatestPositions(positions)
         const packed = packSatellitePositions(positions)
         satLayer.setData(packed.posBuffer, packed.metaBuffer, packed.count)
+        setSatelliteCount(packed.count)
         refreshLivePairOverlay()
         refreshSelectedSatelliteOverlay()
         refreshSelectedSatelliteOrbit()
@@ -1457,6 +1460,7 @@ export default function Map() {
           // ghost panel up. Toggle stays on so the user's intent is preserved.
           setConjunctionEvents([])
           setSelectedConjunction(null)
+          setSatelliteCount(0)
           latestPositionsByNoradRef.current.clear()
           conjLineLayerRef.current?.setData(null, latestPositionsByNoradRef.current)
           conjMidpointLayerRef.current?.setData(null)
@@ -1495,6 +1499,7 @@ export default function Map() {
       refreshLatestPositions(positions)
       const packed = packSatellitePositions(positions)
       satLayer.setData(packed.posBuffer, packed.metaBuffer, packed.count)
+      setSatelliteCount(packed.count)
       refreshLivePairOverlay()
       refreshSelectedSatelliteOverlay()
       refreshSelectedSatelliteOrbit()
@@ -1557,7 +1562,7 @@ export default function Map() {
         orbit = null
       }
     }
-  }, [satellitesVisible, globeMode, isMapLoaded, setConjunctionEvents, setSelectedConjunction])
+  }, [satellitesVisible, globeMode, isMapLoaded, setConjunctionEvents, setSelectedConjunction, setSatelliteCount])
 
   // ─── Conjunction overlay (selection-only) ─────────────────────────────────
   //
