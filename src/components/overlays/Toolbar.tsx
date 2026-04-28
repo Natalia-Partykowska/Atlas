@@ -151,22 +151,6 @@ export default function Toolbar() {
         </div>
       </div>
 
-      {/* Context hint for active modes */}
-      {measureMode && (
-        <p className="text-white/40 text-[10px] text-right leading-tight max-w-[144px]">
-          Click two points to measure distance
-        </p>
-      )}
-      {compareMode && (
-        <p className="text-white/40 text-[10px] text-right leading-tight max-w-[144px]">
-          Click a country to pick it up
-        </p>
-      )}
-      {antipodeMode && (
-        <p className="text-white/40 text-[10px] text-right leading-tight max-w-[144px]">
-          Click anywhere to find its antipode
-        </p>
-      )}
     </div>
   )
 }
