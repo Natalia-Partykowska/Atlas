@@ -25,7 +25,7 @@ export const useAtlasStore = create<AtlasState>((set, get) => ({
   compareMode: false,
   measureMode: false,
   antipodeMode: false,
-  globeMode: false,
+  globeMode: true,
   submarineCablesVisible: false,
   satellitesVisible: false,
   satelliteCount: 0,
