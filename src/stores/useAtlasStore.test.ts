@@ -15,7 +15,7 @@ function makeStore() {
     compareMode: false,
     measureMode: false,
     antipodeMode: false,
-    globeMode: false,
+    globeMode: true,
     submarineCablesVisible: false,
     satellitesVisible: false,
     terminatorVisible: false,
@@ -62,12 +62,15 @@ describe('initial state', () => {
     expect(get().activeLayerId).toBe('base')
   })
 
-  it('all modes are off', () => {
+  it('interactive modes are off', () => {
     const s = get()
     expect(s.compareMode).toBe(false)
     expect(s.measureMode).toBe(false)
     expect(s.antipodeMode).toBe(false)
-    expect(s.globeMode).toBe(false)
+  })
+
+  it('defaults to globe view', () => {
+    expect(get().globeMode).toBe(true)
   })
 
   it('all overlays are off', () => {

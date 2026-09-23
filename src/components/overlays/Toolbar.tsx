@@ -6,12 +6,26 @@ function ToolBtn({
   active,
   onClick,
   title,
+  accent,
 }: {
   label: string
   active: boolean
   onClick: () => void
   title: string
+  /** Optional hex accent colour — renders a leading glowing dot + tinted border/glow to make the button stand out. */
+  accent?: string
 }) {
+  // Accent buttons override the neutral border/glow with their colour via inline
+  // styles (Tailwind can't take a runtime hex). Non-accent buttons are untouched.
+  const accentStyle: React.CSSProperties | undefined = accent
+    ? active
+      ? {
+          borderColor: `${accent}80`,
+          boxShadow: `inset 0 1px 0 rgba(255,255,255,0.10), 0 0 18px -4px ${accent}`,
+        }
+      : { borderColor: `${accent}40` }
+    : undefined
+
   return (
     <button
       onClick={onClick}
@@ -19,11 +33,19 @@ function ToolBtn({
       className={[
         'w-full px-3 py-2 rounded-lg text-xs font-medium transition-all duration-200',
         'border backdrop-blur-sm text-left',
+        accent ? 'flex items-center gap-2' : '',
         active
           ? 'bg-white/[0.08] border-white/30 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.10),0_0_14px_-6px_rgba(255,255,255,0.18)]'
           : 'bg-[#0B1220]/40 border-white/[0.08] text-white/50 hover:bg-white/5 hover:border-white/20 hover:text-white/80 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]',
       ].join(' ')}
+      style={accentStyle}
     >
+      {accent && (
+        <span
+          className={['w-1.5 h-1.5 rounded-full shrink-0', active ? '' : 'animate-pulse'].join(' ')}
+          style={{ background: accent, boxShadow: `0 0 6px ${accent}` }}
+        />
+      )}
       {label}
     </button>
   )
@@ -100,20 +122,6 @@ export default function Toolbar() {
               onClick={() => setSubmarineCablesVisible(!submarineCablesVisible)}
               title="Show submarine internet cables across the ocean floor"
             />
-            <ToolBtn
-              label="Satellites"
-              active={satellitesVisible}
-              onClick={() => setSatellitesVisible(!satellitesVisible)}
-              title="Show ~250 real-time satellites (ISS, Starlink, GPS)"
-            />
-            {satellitesVisible && (
-              <ToolBtn
-                label="Conjunctions"
-                active={conjunctionsVisible}
-                onClick={() => setConjunctionsVisible(!conjunctionsVisible)}
-                title="Show predicted close-approach events between satellites"
-              />
-            )}
           </div>
         </div>
       )}
@@ -150,6 +158,30 @@ export default function Toolbar() {
           </div>
         </div>
       </div>
+
+      {/* Satellites — separated orbital tracking group (globe-only) */}
+      {globeMode && (
+        <div className="flex flex-col gap-1 w-full mt-8">
+          <SectionLabel>Satellites</SectionLabel>
+          <div className="flex flex-col gap-1.5">
+            <ToolBtn
+              label="Satellites"
+              active={satellitesVisible}
+              onClick={() => setSatellitesVisible(!satellitesVisible)}
+              title="Show ~250 real-time satellites (ISS, Starlink, GPS)"
+              accent="#00E5FF"
+            />
+            {satellitesVisible && (
+              <ToolBtn
+                label="Conjunctions"
+                active={conjunctionsVisible}
+                onClick={() => setConjunctionsVisible(!conjunctionsVisible)}
+                title="Show predicted close-approach events between satellites"
+              />
+            )}
+          </div>
+        </div>
+      )}
 
     </div>
   )

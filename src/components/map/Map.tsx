@@ -94,7 +94,7 @@ export default function Map() {
   const [antipodeInfo, setAntipodeInfo] = useState<AntipodeInfo | null>(null)
 
   // Globe mode refs
-  const globeModeRef = useRef<boolean>(false)
+  const globeModeRef = useRef<boolean>(true)
   // Mirrors `selectedConjunction` for the auto-scroll gate. The animation loop
   // runs outside React, so it needs a ref it can read every frame.
   const selectedConjunctionRef = useRef<{ noradA: number; noradB: number } | null>(null)
@@ -189,10 +189,14 @@ export default function Map() {
           },
         ],
         glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
+        // Globe is the default projection on first load; the reactive globeMode
+        // effect re-applies the same globe state idempotently once the map
+        // finishes loading (no visible flat→globe flip).
+        projection: { type: 'globe' },
       },
       center: [20, 20],
-      zoom: 2,
-      minZoom: computeMinZoom(containerRef.current.offsetWidth),
+      zoom: 2.5,
+      minZoom: 0.5,
       maxZoom: 8,
       pitch: 0,
       maxPitch: 0,
