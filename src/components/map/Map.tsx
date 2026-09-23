@@ -70,6 +70,9 @@ export default function Map() {
   const mapRef = useRef<maplibregl.Map | null>(null)
   const hoveredIdRef = useRef<string | null>(null)
   const [isMapLoaded, setIsMapLoaded] = useState(false)
+  // Gates the fade-in: the map stays hidden until the country boundaries have
+  // loaded, so the globe + countries appear together (not globe-then-countries).
+  const [revealed, setRevealed] = useState(false)
 
   // Compare mode refs
   const compareModeRef = useRef<boolean>(false)
@@ -228,6 +231,28 @@ export default function Map() {
         data: '/ne_110m_countries.geojson',
         generateId: true,
       })
+
+      // Reveal the map only once the country boundaries have loaded, so the
+      // globe and its countries fade in together instead of the globe showing
+      // ~1s early. The map never goes 'idle' (auto-rotation renders every
+      // frame), so gate on the source loading, not on 'idle'.
+      let revealTimer: ReturnType<typeof setTimeout> | undefined
+      const revealMap = () => setRevealed(true)
+      const onCountriesData = (e: maplibregl.MapSourceDataEvent) => {
+        if (e.sourceId === 'countries' && map.isSourceLoaded('countries')) {
+          map.off('sourcedata', onCountriesData)
+          if (revealTimer) clearTimeout(revealTimer)
+          // One more frame so the country-fills layer actually paints before the fade.
+          map.once('render', revealMap)
+        }
+      }
+      map.on('sourcedata', onCountriesData)
+      // Safety net: never leave the screen blank if the fetch stalls or fails.
+      revealTimer = setTimeout(() => {
+        map.off('sourcedata', onCountriesData)
+        revealMap()
+      }, 5000)
+
       map.addSource('aurora-bands', {
         type: 'geojson',
         data: EMPTY_FEATURE_COLLECTION,
@@ -985,6 +1010,8 @@ export default function Map() {
       const cleanup = () => {
         cancelAnimationFrame(animFrameId)
         if (resumeTimer) clearTimeout(resumeTimer)
+        if (revealTimer) clearTimeout(revealTimer)
+        map.off('sourcedata', onCountriesData)
         window.removeEventListener('keydown', handleKeyDown)
       }
       map.once('remove', cleanup)
@@ -1829,7 +1856,11 @@ export default function Map() {
   }, [auroraVisible, aurora.ovationFailed, isMapLoaded])
 
   return (
-    <div className="relative w-full h-full">
+    <div
+      className={`relative w-full h-full transition-opacity duration-700 ${
+        revealed ? 'opacity-100' : 'opacity-0'
+      }`}
+    >
       <div ref={containerRef} className="w-full h-full" />
       <DistanceLabel info={measureInfo} mapRef={mapRef} />
       <AntipodeLabel info={antipodeInfo} mapRef={mapRef} />
