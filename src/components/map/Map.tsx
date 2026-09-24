@@ -44,6 +44,7 @@ import { SatelliteSelectionLayer } from '@/lib/satelliteSelectionLayer'
 import { SatelliteHoverLayer } from '@/lib/satelliteHoverLayer'
 import { SatelliteOrbitLayer } from '@/lib/satelliteOrbitLayer'
 import { generateOrbitPoints } from '@/lib/satelliteOrbital'
+import { dismissSplash } from '@/lib/splash'
 import { twoline2satrec } from 'satellite.js'
 import type { SatRec } from 'satellite.js'
 import DistanceLabel from '@/components/overlays/DistanceLabel'
@@ -70,9 +71,6 @@ export default function Map() {
   const mapRef = useRef<maplibregl.Map | null>(null)
   const hoveredIdRef = useRef<string | null>(null)
   const [isMapLoaded, setIsMapLoaded] = useState(false)
-  // Gates the fade-in: the map stays hidden until the country boundaries have
-  // loaded, so the globe + countries appear together (not globe-then-countries).
-  const [revealed, setRevealed] = useState(false)
 
   // Compare mode refs
   const compareModeRef = useRef<boolean>(false)
@@ -232,12 +230,13 @@ export default function Map() {
         generateId: true,
       })
 
-      // Reveal the map only once the country boundaries have loaded, so the
-      // globe and its countries fade in together instead of the globe showing
-      // ~1s early. The map never goes 'idle' (auto-rotation renders every
-      // frame), so gate on the source loading, not on 'idle'.
+      // Dismiss the first-load splash (index.html) only once the country
+      // boundaries have loaded, so the globe, its countries and the App chrome
+      // appear together instead of the globe showing ~1s early. The map never
+      // goes 'idle' (auto-rotation renders every frame), so gate on the source
+      // loading, not on 'idle'.
       let revealTimer: ReturnType<typeof setTimeout> | undefined
-      const revealMap = () => setRevealed(true)
+      const revealMap = () => dismissSplash()
       const onCountriesData = (e: maplibregl.MapSourceDataEvent) => {
         if (e.sourceId === 'countries' && map.isSourceLoaded('countries')) {
           map.off('sourcedata', onCountriesData)
@@ -1856,11 +1855,7 @@ export default function Map() {
   }, [auroraVisible, aurora.ovationFailed, isMapLoaded])
 
   return (
-    <div
-      className={`relative w-full h-full transition-opacity duration-700 ${
-        revealed ? 'opacity-100' : 'opacity-0'
-      }`}
-    >
+    <div className="relative w-full h-full">
       <div ref={containerRef} className="w-full h-full" />
       <DistanceLabel info={measureInfo} mapRef={mapRef} />
       <AntipodeLabel info={antipodeInfo} mapRef={mapRef} />

@@ -18,7 +18,8 @@ export default function BrandStrip() {
 
   return (
     <div className="fixed top-4 left-4 z-40 select-none pointer-events-none [&_*]:pointer-events-none">
-      {/* Brand mark + wordmark */}
+      {/* Brand mark + wordmark. The first-load splash in index.html redraws
+          this mark (with an orbiting satellite) — keep the geometry in sync. */}
       <div className="flex items-center gap-2 text-white/90">
         <svg
           width="22"
