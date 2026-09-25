@@ -8,7 +8,11 @@
 // a whole-name clip, or the browser's own voice until one is generated.
 
 export interface VoiceManifest {
-  voiceId: string
+  /** Voice display name, e.g. "Atlas" */
+  voice: string
+  /** First 12 hex chars of sha256(voice ID) — detects a voice change without
+   *  committing the ID itself */
+  voiceHash: string
   model: string
   format: string
   /** '0'–'9' → clip file */

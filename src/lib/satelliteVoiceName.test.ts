@@ -89,7 +89,8 @@ describe('voiceClipFile', () => {
 
 describe('planUtterance', () => {
   const manifest: VoiceManifest = {
-    voiceId: 'atlas',
+    voice: 'Atlas',
+    voiceHash: '000000000000',
     model: 'eleven_flash_v2_5',
     format: 'mp3_44100_64',
     digits: {
