@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { ConjunctionAnnouncement } from './satelliteVoice'
 import type { VoiceManifest } from './satelliteVoiceName'
 
 const MANIFEST: VoiceManifest = {
@@ -13,7 +14,14 @@ const MANIFEST: VoiceManifest = {
     '8': 'digit-eight.mp3',
   },
   families: { STARLINK: 'family-starlink.mp3' },
-  names: { 'ISS ZARYA': 'name-international-space-station.mp3' },
+  names: {
+    'ISS ZARYA': 'name-international-space-station.mp3',
+    'FENGYUN 1C DEB': 'name-fengyun-one-c-debris.mp3',
+  },
+  phrases: {
+    'time:12': 'phrase-close-approach-in-twelve-minutes.mp3',
+    'dist:400': 'phrase-four-hundred-metres-apart.mp3',
+  },
 }
 
 // 1 s at 1 kHz; audible only for samples 200–699 → trimmed to 0.19 s + 0.53 s.
@@ -61,6 +69,7 @@ class FakeAudioContext {
 
 let fetched: string[] = []
 let manifestOk = true
+let manifestBody: VoiceManifest = MANIFEST
 let voices: { name: string; lang: string }[] = []
 let voicesChanged: (() => void)[] = []
 const speech = {
@@ -77,6 +86,7 @@ beforeEach(() => {
   contexts = []
   fetched = []
   manifestOk = true
+  manifestBody = MANIFEST
   voices = []
   voicesChanged = []
   speech.speak.mockClear()
@@ -96,7 +106,7 @@ beforeEach(() => {
     vi.fn(async (url: string) => {
       fetched.push(url)
       if (url.endsWith('manifest.json')) {
-        return { ok: manifestOk, status: manifestOk ? 200 : 404, json: async () => MANIFEST }
+        return { ok: manifestOk, status: manifestOk ? 200 : 404, json: async () => manifestBody }
       }
       const file = url.split('/').pop()!
       return { ok: true, status: 200, arrayBuffer: async () => new TextEncoder().encode(file).buffer }
@@ -206,6 +216,117 @@ describe('speakSatellite', () => {
     expect(fetched.filter((u) => u.endsWith('manifest.json'))).toHaveLength(1)
     expect(contexts).toHaveLength(1)
     expect(contexts[0].decodeAudioData).toHaveBeenCalledTimes(5)
+  })
+})
+
+const MIN = 60_000
+// Half a minute into minute 12, so the time the test takes can't change the phrase.
+const conjunction = (overrides: Partial<ConjunctionAnnouncement> = {}): ConjunctionAnnouncement => ({
+  nameA: 'STARLINK-3087',
+  nameB: 'FENGYUN 1C DEB',
+  tcaEpochMs: Date.now() + 12.5 * MIN,
+  missKm: 0.42,
+  ...overrides,
+})
+
+describe('speakConjunction', () => {
+  it('plays the time line, both names and the distance line with a pause between lines', async () => {
+    const { speakConjunction, CLIP_GAP_S, LINE_GAP_S } = await load()
+    await speakConjunction(conjunction())
+
+    const [ctx] = contexts
+    expect(ctx.sources.map((s) => s.buffer?.tag)).toEqual([
+      'phrase-close-approach-in-twelve-minutes.mp3',
+      'family-starlink.mp3',
+      'digit-three.mp3',
+      'digit-zero.mp3',
+      'digit-eight.mp3',
+      'digit-seven.mp3',
+      'name-fengyun-one-c-debris.mp3',
+      'phrase-four-hundred-metres-apart.mp3',
+    ])
+    // Every clip trims to 0.53 s. Lines are LINE_GAP_S apart; the pieces of
+    // "Starlink… three zero eight seven" keep the short splice gap.
+    const starts = ctx.sources.map((s) => s.start.mock.calls[0][0])
+    expect(starts[0]).toBeCloseTo(10.02)
+    const gaps = starts.slice(1).map((t, i) => t - starts[i] - 0.53)
+    const want = [LINE_GAP_S, CLIP_GAP_S, CLIP_GAP_S, CLIP_GAP_S, CLIP_GAP_S, LINE_GAP_S, LINE_GAP_S]
+    gaps.forEach((gap, i) => expect(gap).toBeCloseTo(want[i]))
+    expect(speech.speak).not.toHaveBeenCalled()
+  })
+
+  it('reads the whole callout in the browser voice when a name has no clip', async () => {
+    const { speakConjunction } = await load()
+    await speakConjunction(conjunction({ nameB: 'PISAT' }))
+    expect(contexts[0].sources).toHaveLength(0)
+    expect(spokenTexts()).toEqual([
+      'Close approach in twelve minutes. Starlink three zero eight seven. Pisat. Four hundred metres apart.',
+    ])
+  })
+
+  it('reads the whole callout in the browser voice when a phrase has no clip', async () => {
+    const { speakConjunction } = await load()
+    await speakConjunction(conjunction({ missKm: 3.3 }))
+    expect(contexts[0].sources).toHaveLength(0)
+    expect(spokenTexts()).toEqual([
+      'Close approach in twelve minutes. Starlink three zero eight seven. Fengyun one C debris. Three point three kilometres apart.',
+    ])
+  })
+
+  it('uses the browser voice with a pack recorded before conjunction phrases', async () => {
+    manifestBody = { ...MANIFEST, phrases: undefined }
+    const { speakConjunction } = await load()
+    await speakConjunction(conjunction())
+    expect(contexts[0].sources).toHaveLength(0)
+    expect(spokenTexts()).toHaveLength(1)
+  })
+
+  it('stays silent while a name is still a NORAD number', async () => {
+    const { speakConjunction } = await load()
+    await speakConjunction(conjunction({ nameA: '44713' }))
+    expect(fetched).toEqual([])
+    expect(speech.speak).not.toHaveBeenCalled()
+  })
+
+  it('cuts off a satellite name that is playing', async () => {
+    const { speakSatellite, speakConjunction } = await load()
+    await speakSatellite('STARLINK-3087')
+    const name = [...contexts[0].sources]
+    await speakConjunction(conjunction())
+    for (const src of name) expect(src.stop).toHaveBeenCalled()
+  })
+})
+
+describe('stopSatelliteVoice', () => {
+  it('leaves a satellite name playing when the conjunction drawer closes', async () => {
+    const { speakSatellite, stopSatelliteVoice } = await load()
+    await speakSatellite('STARLINK-3087')
+    speech.cancel.mockClear()
+    stopSatelliteVoice('conjunction')
+    for (const src of contexts[0].sources) expect(src.stop).not.toHaveBeenCalled()
+    expect(speech.cancel).not.toHaveBeenCalled()
+  })
+
+  it('leaves a browser-voice sentence alone when the satellite drawer closes', async () => {
+    const { speakConjunction, stopSatelliteVoice } = await load()
+    await speakConjunction(conjunction({ nameB: 'PISAT' }))
+    speech.cancel.mockClear()
+    stopSatelliteVoice('satellite')
+    expect(speech.cancel).not.toHaveBeenCalled()
+  })
+
+  it('stops a sentence when its own drawer closes', async () => {
+    const { speakConjunction, stopSatelliteVoice } = await load()
+    await speakConjunction(conjunction())
+    stopSatelliteVoice('conjunction')
+    for (const src of contexts[0].sources) expect(src.stop).toHaveBeenCalled()
+  })
+
+  it('stops any voice when no source is given', async () => {
+    const { speakSatellite, stopSatelliteVoice } = await load()
+    await speakSatellite('STARLINK-3087')
+    stopSatelliteVoice()
+    for (const src of contexts[0].sources) expect(src.stop).toHaveBeenCalled()
   })
 })
 

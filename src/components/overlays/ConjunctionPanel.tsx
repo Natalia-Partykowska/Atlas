@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useAtlasStore } from '@/stores/useAtlasStore'
 import type { ConjunctionEvent } from '@/lib/orbitStream'
+import { speakConjunction, stopSatelliteVoice } from '@/lib/satelliteVoice'
+import { SpeakerIcon, VoiceFooter } from './VoiceControls'
 
 const DRAWER_WIDTH_PX = 380
 const TRANSITION_MS = 250
@@ -13,6 +15,11 @@ function formatCountdown(deltaMs: number): string {
   const s = total % 60
   const pad = (n: number) => String(n).padStart(2, '0')
   return `T- ${pad(h)}:${pad(m)}:${pad(s)}`
+}
+
+/** Row tooltip part: `STARLINK-3087 (#44713)`, or just `#44713` without a name. */
+function pairLabel(name: string | undefined, norad: number): string {
+  return name ? `${name} (#${norad})` : `#${norad}`
 }
 
 function isSelected(
@@ -34,6 +41,8 @@ export default function ConjunctionPanel() {
   const setSelected = useAtlasStore((s) => s.setSelectedConjunction)
   const setConjunctionsVisible = useAtlasStore((s) => s.setConjunctionsVisible)
   const receivedFirstBatch = useAtlasStore((s) => s.conjunctionsReceivedFirstBatch)
+  const catalog = useAtlasStore((s) => s.satelliteCatalog)
+  const voiceEnabled = useAtlasStore((s) => s.satelliteVoiceEnabled)
 
   // Drawer is "open" only when conjunctions toggle AND we're on the globe
   // (the dot/line layers are globe-only, so showing the drawer in flat mode
@@ -64,11 +73,29 @@ export default function ConjunctionPanel() {
     [events],
   )
 
+  // Closing the drawer cuts the sentence off. Keyed on the drawer, not on the
+  // selection: picking a satellite on the globe clears the selection too, and
+  // must not silence that satellite's name.
+  useEffect(() => {
+    if (!isOpen) stopSatelliteVoice('conjunction')
+  }, [isOpen])
+
+  // Called from click handlers only — the voice's AudioContext has to start
+  // inside the user gesture. Silent until the catalog has named both.
+  const say = (e: ConjunctionEvent) => {
+    const nameA = catalog?.get(e.noradA)?.name
+    const nameB = catalog?.get(e.noradB)?.name
+    if (!nameA || !nameB) return
+    void speakConjunction({ nameA, nameB, tcaEpochMs: e.tcaEpochMs, missKm: e.missKm })
+  }
+
   const handleClick = (e: ConjunctionEvent) => {
     if (isSelected(e, selected)) {
       setSelected(null)
+      stopSatelliteVoice('conjunction')
     } else {
       setSelected({ noradA: e.noradA, noradB: e.noradB })
+      if (voiceEnabled) say(e)
     }
   }
 
@@ -130,10 +157,15 @@ export default function ConjunctionPanel() {
               {sorted.map((e) => {
                 const isSel = isSelected(e, selected)
                 const dt = e.tcaEpochMs - now
+                // Names come from the /catalog fetch; until it lands (or for
+                // an object it doesn't know) the NORAD number stands in.
+                const nameA = catalog?.get(e.noradA)?.name
+                const nameB = catalog?.get(e.noradB)?.name
                 return (
-                  <li key={`${e.noradA}-${e.noradB}-${e.tcaEpochMs}`}>
+                  <li key={`${e.noradA}-${e.noradB}-${e.tcaEpochMs}`} className="relative">
                     <button
                       onClick={() => handleClick(e)}
+                      title={`${pairLabel(nameA, e.noradA)} ↔ ${pairLabel(nameB, e.noradB)}`}
                       className={[
                         'w-full text-left px-4 py-3 transition-colors duration-150',
                         isSel
@@ -141,9 +173,18 @@ export default function ConjunctionPanel() {
                           : 'hover:bg-white/5',
                       ].join(' ')}
                     >
-                      <div className="text-white/90 text-sm font-medium font-mono tabular-nums">
-                        #{e.noradA} ↔ #{e.noradB}
+                      {/* Each name truncates on its own so a long first name
+                          can't push the second one out of the row. */}
+                      <div className="flex items-baseline gap-1.5 text-white/90 text-sm font-medium">
+                        <span className="truncate min-w-0">{nameA ?? `#${e.noradA}`}</span>
+                        <span className="shrink-0 text-white/40">↔</span>
+                        <span className="truncate min-w-0">{nameB ?? `#${e.noradB}`}</span>
                       </div>
+                      {(nameA || nameB) && (
+                        <div className="text-white/35 text-[11px] mt-0.5 font-mono tabular-nums">
+                          #{e.noradA} ↔ #{e.noradB}
+                        </div>
+                      )}
                       <div className="text-white/55 text-xs mt-0.5 font-mono tabular-nums">
                         miss {e.missKm.toFixed(2)} km · Δv{' '}
                         {e.relVelKms.toFixed(1)} km/s
@@ -157,12 +198,27 @@ export default function ConjunctionPanel() {
                         {formatCountdown(dt)}
                       </div>
                     </button>
+                    {isSel && nameA && nameB && (
+                      // A sibling of the row button (buttons can't nest), level
+                      // with the countdown. Replays even when "Read aloud" is
+                      // off — it's an explicit ask.
+                      <button
+                        onClick={() => say(e)}
+                        aria-label="Read this conjunction aloud"
+                        title="Read aloud"
+                        className="absolute right-4 bottom-3 text-white/40 hover:text-white/80 transition-colors p-1 -m-1"
+                      >
+                        <SpeakerIcon />
+                      </button>
+                    )}
                   </li>
                 )
               })}
             </ul>
           )}
       </div>
+
+      <VoiceFooter />
     </aside>
   )
 }

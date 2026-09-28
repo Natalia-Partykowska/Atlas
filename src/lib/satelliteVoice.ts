@@ -1,17 +1,31 @@
+import { conjunctionSentence, planConjunctionUtterance } from './conjunctionVoiceText'
+import type { ConjunctionPlan, ConjunctionSpeech } from './conjunctionVoiceText'
 import { planUtterance, spokenText } from './satelliteVoiceName'
 import type { VoiceManifest } from './satelliteVoiceName'
 
-// Plays satellite names from the pre-generated ElevenLabs pack in
-// public/audio/satellite-voice/ — static files, so clicks never spend credits.
-// Constellation members are spliced ("Starlink" + "three zero eight seven"),
-// so each clip's padding is trimmed and the pieces are scheduled back-to-back
-// on one AudioContext. Anything the pack can't voice falls back to the
-// browser's own speechSynthesis.
+// Plays satellite names — and conjunction callouts ("Close approach in twelve
+// minutes. Starlink … . Fengyun … . Four hundred metres apart.") — from the
+// pre-generated ElevenLabs pack in public/audio/satellite-voice/: static files,
+// so clicks never spend credits. Utterances are spliced from several clips
+// ("Starlink" + "three zero eight seven"), so each clip's padding is trimmed
+// and the pieces are scheduled back-to-back on one AudioContext. Anything the
+// pack can't voice falls back to the browser's own speechSynthesis.
 
 const PACK_URL = `${import.meta.env.BASE_URL}audio/satellite-voice/`
 const STORAGE_KEY = 'atlas.satelliteVoice'
 /** Pause between spliced clips. */
 export const CLIP_GAP_S = 0.05
+/** Pause between the lines of a conjunction callout — chosen by ear. */
+export const LINE_GAP_S = 0.3
+
+/** Who is speaking — each drawer stops only its own audio. */
+export type VoiceSource = 'satellite' | 'conjunction'
+
+interface ClipStep {
+  file: string
+  /** Silence before the next clip */
+  gapAfterS: number
+}
 // Clips carry ~25–75 ms of lead-in and ~230–260 ms of tail silence. Trim to
 // the first/last sample above ~-34 dBFS, keeping a sliver either side so soft
 // consonants aren't clipped.
@@ -30,6 +44,7 @@ const bytesCache = new Map<string, Promise<ArrayBuffer>>()
 const clipCache = new Map<string, Promise<TrimmedClip>>()
 let ctx: AudioContext | null = null
 let active: AudioBufferSourceNode[] = []
+let activeSource: VoiceSource | null = null
 let utteranceId = 0
 
 export function loadVoiceManifest(): Promise<VoiceManifest> {
@@ -120,9 +135,15 @@ function loadClip(audio: AudioContext, file: string): Promise<TrimmedClip> {
   return p
 }
 
-/** Stops whatever is being said — spliced clips and the browser voice. */
-export function stopSatelliteVoice(): void {
+/**
+ * Stops whatever is being said — spliced clips and the browser voice. With a
+ * `source`, only if that source is the one speaking, so one drawer closing
+ * can't cut off the other drawer's audio.
+ */
+export function stopSatelliteVoice(source?: VoiceSource): void {
+  if (source && source !== activeSource) return
   utteranceId++
+  activeSource = null
   for (const src of active) {
     try {
       src.stop()
@@ -181,9 +202,8 @@ function chooseFallbackVoice(): SpeechSynthesisVoice | null {
   return fallbackVoice
 }
 
-function speakWithBrowser(rawName: string): void {
+function speakWithBrowser(text: string): void {
   if (typeof speechSynthesis === 'undefined' || typeof SpeechSynthesisUtterance === 'undefined') return
-  const text = spokenText(rawName)
   if (!text) return
   const utterance = new SpeechSynthesisUtterance(text)
   utterance.lang = 'en-US'
@@ -205,27 +225,99 @@ function speakWithBrowser(rawName: string): void {
  * otherwise Safari and Chrome block playback once the clips have loaded.
  */
 export async function speakSatellite(rawName: string): Promise<void> {
+  if (!isSpeakableName(rawName)) {
+    stopSatelliteVoice()
+    return
+  }
+  await speak(
+    'satellite',
+    (manifest) => planUtterance(rawName, manifest)?.map((file) => ({ file, gapAfterS: CLIP_GAP_S })) ?? null,
+    spokenText(rawName),
+  )
+}
+
+export interface ConjunctionAnnouncement {
+  /** Raw catalog names */
+  nameA: string
+  nameB: string
+  tcaEpochMs: number
+  missKm: number
+}
+
+/**
+ * Reads a conjunction aloud — "Close approach in twelve minutes. Starlink three
+ * zero eight seven. Fengyun one C debris. Four hundred metres apart." —
+ * replacing anything already playing. Same contract as `speakSatellite`: call
+ * it from the click handler. When the pack can't voice every part, the browser
+ * voice reads the whole callout rather than switching voices halfway through.
+ */
+export async function speakConjunction(c: ConjunctionAnnouncement): Promise<void> {
+  if (!isSpeakableName(c.nameA) || !isSpeakableName(c.nameB)) {
+    stopSatelliteVoice()
+    return
+  }
+  // Counted from now, so a replay a minute later says a minute less.
+  const speech: ConjunctionSpeech = {
+    nameA: c.nameA,
+    nameB: c.nameB,
+    msToTca: c.tcaEpochMs - Date.now(),
+    missKm: c.missKm,
+  }
+  await speak(
+    'conjunction',
+    (manifest) => {
+      const plan = planConjunctionUtterance(speech, manifest)
+      return plan && conjunctionSteps(plan)
+    },
+    conjunctionSentence(speech),
+  )
+}
+
+// The callout's four lines — time, name A, name B, distance — with a pause
+// between lines; the pieces of a spliced name keep the short gap.
+function conjunctionSteps(plan: ConjunctionPlan): ClipStep[] {
+  const line = (files: string[]) =>
+    files.map((file, i) => ({ file, gapAfterS: i === files.length - 1 ? LINE_GAP_S : CLIP_GAP_S }))
+  return [...line([plan.time]), ...line(plan.nameA), ...line(plan.nameB), ...line([plan.distance])]
+}
+
+// The WS path names satellites by NORAD number until the catalog arrives —
+// that's not worth reading out.
+function isSpeakableName(name: string): boolean {
+  const trimmed = name.trim()
+  return trimmed !== '' && !/^\d+$/.test(trimmed)
+}
+
+/**
+ * Replaces anything playing with a new utterance: the pack's clips when
+ * `planFor` finds all of them, otherwise `fallbackText` in the browser's voice.
+ * The AudioContext is created / resumed before the first await, which is why
+ * callers must reach this synchronously from the click.
+ */
+async function speak(
+  source: VoiceSource,
+  planFor: (manifest: VoiceManifest) => ClipStep[] | null,
+  fallbackText: string,
+): Promise<void> {
   stopSatelliteVoice()
+  activeSource = source
   const id = utteranceId
-  // The WS path names satellites by NORAD number until the catalog arrives —
-  // that's not worth reading out.
-  if (!rawName.trim() || /^\d+$/.test(rawName.trim())) return
 
   if (!ctx && typeof AudioContext !== 'undefined') ctx = new AudioContext()
   if (ctx?.state === 'suspended') void ctx.resume()
   const audio = ctx
 
   try {
-    const plan = audio ? planUtterance(rawName, await loadVoiceManifest()) : null
-    if (!audio || !plan) {
-      if (id === utteranceId) speakWithBrowser(rawName)
+    const steps = audio ? planFor(await loadVoiceManifest()) : null
+    if (!audio || !steps) {
+      if (id === utteranceId) speakWithBrowser(fallbackText)
       return
     }
-    const clips = await Promise.all(plan.map((file) => loadClip(audio, file)))
+    const clips = await Promise.all(steps.map((step) => loadClip(audio, step.file)))
     if (id !== utteranceId) return // a newer click took over while loading
 
     let at = audio.currentTime + 0.02
-    for (const clip of clips) {
+    clips.forEach((clip, i) => {
       const src = audio.createBufferSource()
       src.buffer = clip.buffer
       src.connect(audio.destination)
@@ -234,11 +326,11 @@ export async function speakSatellite(rawName: string): Promise<void> {
       }
       src.start(at, clip.offset, clip.duration)
       active.push(src)
-      at += clip.duration + CLIP_GAP_S
-    }
+      at += clip.duration + steps[i].gapAfterS
+    })
   } catch (err) {
     console.warn('[satellite-voice] falling back to browser voice:', err)
-    if (id === utteranceId) speakWithBrowser(rawName)
+    if (id === utteranceId) speakWithBrowser(fallbackText)
   }
 }
 
