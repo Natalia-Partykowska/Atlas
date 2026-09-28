@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Browser-tab icon: the BrandStrip.tsx 28-unit mark (offset 2,2) on a dark
+       tile so it reads on light and dark tab bars. Keep the geometry in sync
+       with BrandStrip.tsx and the index.html splash. The orbit stroke is 2
+       instead of 1.5 so it survives 16 px. -->
+  <rect width="32" height="32" rx="7" fill="#080B12"/>
+  <g transform="translate(2 2)" fill="#FFFFFF">
+    <ellipse cx="14" cy="14" rx="12" ry="4" fill="none" stroke="#FFFFFF" stroke-width="2" transform="rotate(-22 14 14)" opacity="0.75"/>
+    <circle cx="14" cy="14" r="3" opacity="0.95"/>
+    <circle cx="25" cy="10.6" r="1.6"/>
+  </g>
+</svg>

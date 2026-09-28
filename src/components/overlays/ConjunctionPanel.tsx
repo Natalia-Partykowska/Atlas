@@ -119,9 +119,12 @@ export default function ConjunctionPanel() {
         <header className="px-4 py-3 border-b border-white/10 flex items-center gap-2">
           <h2 className="text-white/90 text-sm font-medium flex-1">
             Conjunctions
-            <span className="text-white/40 text-xs font-normal ml-2">
-              {sorted.length} {sorted.length === 1 ? 'event' : 'events'}
-            </span>
+            {/* No count while "Loading…" — it would be a guess, not a result. */}
+            {receivedFirstBatch && (
+              <span className="text-white/40 text-xs font-normal ml-2">
+                {sorted.length} {sorted.length === 1 ? 'event' : 'events'}
+              </span>
+            )}
           </h2>
           <button
             onClick={() => setConjunctionsVisible(false)}

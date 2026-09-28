@@ -1690,7 +1690,8 @@ export default function Map() {
     }
     if (!center) return
 
-    map.easeTo({ center, zoom: 2.5, duration: 600 })
+    // Centre only — the user's zoom is kept.
+    map.easeTo({ center, duration: 600 })
   }, [selectedConjunction])
 
   // ─── Selected-satellite orbit + halo + camera fly-to ─────────────────────
@@ -1739,7 +1740,8 @@ export default function Map() {
         : points.length > 0
           ? [points[0].lng, points[0].lat]
           : null
-      if (center) map.easeTo({ center, zoom: 2.5, duration: 600 })
+      // Centre only — the user's zoom is kept.
+      if (center) map.easeTo({ center, duration: 600 })
     }
 
     // Local-fallback path: bundled satrec already in memory. Use it directly

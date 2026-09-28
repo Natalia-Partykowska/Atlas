@@ -94,6 +94,30 @@ describe('ConjunctionPanel row labels', () => {
   })
 })
 
+// ── Header count ──────────────────────────────────────────────────────────────
+
+describe('ConjunctionPanel header count', () => {
+  const count = () => screen.queryByText(/^\d+ events?$/)
+
+  it('shows no count while the first batch is loading', () => {
+    useAtlasStore.setState({ conjunctionsReceivedFirstBatch: false })
+    render(<ConjunctionPanel />)
+    expect(screen.getByText('Loading…')).toBeInTheDocument()
+    expect(count()).not.toBeInTheDocument()
+  })
+
+  it('shows the count once a batch has arrived', () => {
+    useAtlasStore.setState({ conjunctionsReceivedFirstBatch: false, conjunctionEvents: [] })
+    render(<ConjunctionPanel />)
+    act(() => {
+      useAtlasStore
+        .getState()
+        .setConjunctionEvents([conjunction(), conjunction({ noradA: 25544 })])
+    })
+    expect(count()).toHaveTextContent('2 events')
+  })
+})
+
 // ── Selection ─────────────────────────────────────────────────────────────────
 
 describe('ConjunctionPanel selection', () => {

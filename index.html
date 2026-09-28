@@ -2,7 +2,11 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/globe.svg" />
+    <!-- Tab icon: SVG where supported; `sizes` on the PNG fallback keeps Chrome
+         from picking it over the SVG. -->
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Atlas — Explore the world's data through an interactive 3D globe." />
     <title>Atlas</title>
@@ -17,7 +21,8 @@
       (src/lib/splash.ts) once the globe's countries have painted.
 
       The mark mirrors BrandStrip.tsx's 28-unit logo (orbit rx 12 / ry 4 tilted
-      -22deg, planet r 3, satellite r 1.6) — keep the two in sync.
+      -22deg, planet r 3, satellite r 1.6) — keep it in sync with BrandStrip.tsx
+      and the tab icons (public/favicon.svg, favicon-32.png, apple-touch-icon.png).
     -->
     <style>
       html { background: #080B12; }
