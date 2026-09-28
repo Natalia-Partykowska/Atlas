@@ -597,5 +597,12 @@
     "SHIJIAN-29A": "name-shijian-twenty-nine-a.mp3",
     "SHIJIAN-29B": "name-shijian-twenty-nine-b.mp3",
     "JAM-E JAM 1": "name-jam-e-jam-one.mp3"
+  },
+  "phrases": {
+    "time:12": "phrase-close-approach-in-twelve-minutes.mp3",
+    "dist:400": "phrase-four-hundred-metres-apart.mp3",
+    "time:75": "phrase-close-approach-in-one-hour-and-fifteen-minutes.mp3",
+    "dist:2400": "phrase-two-point-four-kilometres-apart.mp3",
+    "dist:0": "phrase-less-than-a-hundred-metres-apart.mp3"
   }
 }
