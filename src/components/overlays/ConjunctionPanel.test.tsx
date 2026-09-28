@@ -1,9 +1,18 @@
-import { describe, it, expect, beforeEach } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { render, screen, fireEvent, act } from '@testing-library/react'
 import ConjunctionPanel from './ConjunctionPanel'
 import { useAtlasStore } from '@/stores/useAtlasStore'
+import { speakConjunction, stopSatelliteVoice } from '@/lib/satelliteVoice'
 import type { ConjunctionEvent } from '@/lib/orbitStream'
 import type { SatelliteCatalogEntry } from '@/lib/satelliteCatalog'
+
+// The store reads the saved preference through this module too.
+vi.mock('@/lib/satelliteVoice', () => ({
+  speakConjunction: vi.fn(async () => {}),
+  stopSatelliteVoice: vi.fn(),
+  readVoiceEnabled: () => true,
+  writeVoiceEnabled: vi.fn(),
+}))
 
 const STARLINK = 44713
 const FENGYUN = 29228
@@ -30,6 +39,8 @@ function conjunction(overrides: Partial<ConjunctionEvent> = {}): ConjunctionEven
 }
 
 beforeEach(() => {
+  vi.mocked(speakConjunction).mockClear()
+  vi.mocked(stopSatelliteVoice).mockClear()
   useAtlasStore.setState({
     globeMode: true,
     conjunctionsVisible: true,
@@ -38,11 +49,13 @@ beforeEach(() => {
     selectedConjunction: null,
     selectedSatellite: null,
     satelliteCatalog: CATALOG,
+    satelliteVoiceEnabled: true,
   })
 })
 
-// The only row button — the header's close button has no "↔" in its name.
+// The only row button — no other button has "↔" in its name.
 const row = () => screen.getByRole('button', { name: /↔/ })
+const replay = () => screen.queryByRole('button', { name: 'Read this conjunction aloud' })
 
 // ── Row labels ────────────────────────────────────────────────────────────────
 
@@ -93,5 +106,78 @@ describe('ConjunctionPanel selection', () => {
     })
     fireEvent.click(row())
     expect(useAtlasStore.getState().selectedConjunction).toBeNull()
+  })
+})
+
+// ── Voice ─────────────────────────────────────────────────────────────────────
+
+describe('ConjunctionPanel voice', () => {
+  it('reads the pair aloud from inside the click', () => {
+    render(<ConjunctionPanel />)
+    fireEvent.click(row())
+    // Synchronous: the AudioContext has to start inside the user gesture.
+    const [e] = useAtlasStore.getState().conjunctionEvents
+    expect(speakConjunction).toHaveBeenCalledWith({
+      nameA: 'STARLINK-3087',
+      nameB: 'FENGYUN 1C DEB',
+      tcaEpochMs: e.tcaEpochMs,
+      missKm: 0.42,
+    })
+  })
+
+  it('stays quiet when "Read aloud" is off', () => {
+    useAtlasStore.setState({ satelliteVoiceEnabled: false })
+    render(<ConjunctionPanel />)
+    fireEvent.click(row())
+    expect(useAtlasStore.getState().selectedConjunction).not.toBeNull()
+    expect(speakConjunction).not.toHaveBeenCalled()
+  })
+
+  it('stays quiet until the catalog has named both satellites', () => {
+    useAtlasStore.setState({ satelliteCatalog: new Map([[STARLINK, CATALOG.get(STARLINK)!]]) })
+    render(<ConjunctionPanel />)
+    fireEvent.click(row())
+    expect(speakConjunction).not.toHaveBeenCalled()
+    expect(replay()).not.toBeInTheDocument()
+  })
+
+  it('offers replay on the selected row only, even with "Read aloud" off', () => {
+    useAtlasStore.setState({ satelliteVoiceEnabled: false })
+    render(<ConjunctionPanel />)
+    expect(replay()).not.toBeInTheDocument()
+    fireEvent.click(row())
+    fireEvent.click(replay()!)
+    expect(speakConjunction).toHaveBeenCalledTimes(1)
+  })
+
+  it('stops the sentence when the row is deselected', () => {
+    render(<ConjunctionPanel />)
+    fireEvent.click(row())
+    fireEvent.click(row())
+    expect(stopSatelliteVoice).toHaveBeenCalledWith('conjunction')
+  })
+
+  it('stops the sentence when the drawer closes', () => {
+    render(<ConjunctionPanel />)
+    fireEvent.click(row())
+    act(() => useAtlasStore.getState().setConjunctionsVisible(false))
+    expect(stopSatelliteVoice).toHaveBeenCalledWith('conjunction')
+  })
+
+  it("doesn't cut off a satellite's name when picking it clears the selection", () => {
+    render(<ConjunctionPanel />)
+    fireEvent.click(row())
+    act(() => useAtlasStore.getState().setSelectedSatellite({ norad: 25544 }))
+    expect(useAtlasStore.getState().selectedConjunction).toBeNull()
+    expect(stopSatelliteVoice).not.toHaveBeenCalled()
+  })
+
+  it('turns "Read aloud" off for both drawers and stops the voice', () => {
+    render(<ConjunctionPanel />)
+    const toggle = screen.getByRole('switch', { name: 'Read aloud' })
+    expect(toggle).toHaveAttribute('aria-checked', 'true')
+    fireEvent.click(toggle)
+    expect(useAtlasStore.getState().satelliteVoiceEnabled).toBe(false)
+    expect(stopSatelliteVoice).toHaveBeenCalledWith()
   })
 })

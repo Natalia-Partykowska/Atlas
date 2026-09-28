@@ -1,14 +1,14 @@
-// Conjunction event → spoken sentence for the Conjunctions drawer:
-//   "In twelve minutes, Starlink three zero eight seven will pass four hundred
-//    metres from Fengyun one C debris."
+// Conjunction event → spoken callout for the Conjunctions drawer:
+//   "Close approach in twelve minutes. Starlink three zero eight seven.
+//    Fengyun one C debris. Four hundred metres apart."
 // Pure and shared with the local generator (`scripts/generate-satellite-voice.mjs`),
 // which loads it with Node's type stripping — hence the explicit `.ts` import
 // and types imported with `import type` only.
 //
-// The pack records both phrases whole ("In twelve minutes," / "will pass four
-// hundred metres from,") so their numbers keep natural intonation; only the
-// names are spliced in, from the Session 13 name clips. The second name ends
-// the sentence because name clips were recorded as finished sentences.
+// Every line is its own sentence. The pack records the time and distance lines
+// whole, so their numbers keep natural intonation, and splices in the Session
+// 13 name clips — recorded as finished sentences, so each join falls on a
+// sentence boundary and none sounds choppy.
 
 import { DIGIT_WORDS, numberWords, planUtterance, spokenText } from './satelliteVoiceName.ts'
 import type { VoiceManifest } from './satelliteVoiceName.ts'
@@ -21,7 +21,7 @@ export const PACK_MAX_METRES = 5000
 export interface ConjunctionPhrase {
   /** Key in the manifest's `phrases` section: `time:12`, `dist:400` */
   key: string
-  /** What the voice says: "In twelve minutes" */
+  /** What the voice says: "Close approach in twelve minutes" */
   spoken: string
 }
 
@@ -34,34 +34,38 @@ export interface ConjunctionSpeech {
   missKm: number
 }
 
-/** Clip files for the sentence, in speaking order. */
+/** Clip files for the callout, in speaking order. */
 export interface ConjunctionPlan {
   time: string
   nameA: string[]
-  distance: string
   nameB: string[]
+  distance: string
 }
 
 /**
- * "In twelve minutes". Rounded down so it agrees with the drawer's T-
- * countdown; under a minute (or just past) is "In under a minute".
+ * "Close approach in twelve minutes". Rounded down so it agrees with the
+ * drawer's T- countdown; under a minute (or just past) is "…in under a minute".
  */
 export function timePhrase(msToTca: number): ConjunctionPhrase {
   const minutes = Math.max(0, Math.floor(msToTca / 60_000))
-  return { key: `time:${minutes}`, spoken: `In ${durationWords(minutes)}` }
+  return { key: `time:${minutes}`, spoken: `Close approach in ${durationWords(minutes)}` }
 }
 
-/** "will pass four hundred metres from", to the nearest 100 m. */
+/** "Four hundred metres apart", to the nearest 100 m. */
 export function distancePhrase(missKm: number): ConjunctionPhrase {
   const metres = Math.max(0, Math.round(missKm * 10)) * 100
-  return { key: `dist:${metres}`, spoken: `will pass ${distanceWords(metres)} from` }
+  return { key: `dist:${metres}`, spoken: capitalize(`${distanceWords(metres)} apart`) }
 }
 
-/** The whole sentence, for the browser-voice fallback. */
+/** The whole callout, for the browser-voice fallback. */
 export function conjunctionSentence(s: ConjunctionSpeech): string {
-  const time = timePhrase(s.msToTca).spoken
-  const distance = distancePhrase(s.missKm).spoken
-  return `${time}, ${spokenText(s.nameA)} ${distance} ${spokenText(s.nameB)}.`
+  const lines = [
+    timePhrase(s.msToTca).spoken,
+    spokenText(s.nameA),
+    spokenText(s.nameB),
+    distancePhrase(s.missKm).spoken,
+  ]
+  return lines.map((line) => `${line}.`).join(' ')
 }
 
 /** Every phrase the pack needs: each minute up to 2 h, each 100 m up to 5 km. */
@@ -73,8 +77,8 @@ export function conjunctionPhraseClips(): ConjunctionPhrase[] {
 }
 
 /**
- * Clips to play for the sentence, or `null` when the pack can't voice all of
- * it — the caller then has the browser read the whole sentence rather than
+ * Clips to play for the callout, or `null` when the pack can't voice all of
+ * it — the caller then has the browser read the whole callout rather than
  * switching voices halfway through.
  */
 export function planConjunctionUtterance(
@@ -86,7 +90,7 @@ export function planConjunctionUtterance(
   const nameA = planUtterance(s.nameA, manifest)
   const nameB = planUtterance(s.nameB, manifest)
   if (!time || !distance || !nameA || !nameB) return null
-  return { time, nameA, distance, nameB }
+  return { time, nameA, nameB, distance }
 }
 
 // 0 → "under a minute"; 75 → "one hour and fifteen minutes"
@@ -113,4 +117,8 @@ function distanceWords(metres: number): string {
 
 function counted(n: number, unit: string): string {
   return `${numberWords(String(n))} ${unit}${n === 1 ? '' : 's'}`
+}
+
+function capitalize(line: string): string {
+  return line[0].toUpperCase() + line.slice(1)
 }

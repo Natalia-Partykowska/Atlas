@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useAtlasStore } from '@/stores/useAtlasStore'
 import type { ConjunctionEvent } from '@/lib/orbitStream'
+import { speakConjunction, stopSatelliteVoice } from '@/lib/satelliteVoice'
+import { SpeakerIcon, VoiceFooter } from './VoiceControls'
 
 const DRAWER_WIDTH_PX = 380
 const TRANSITION_MS = 250
@@ -40,6 +42,7 @@ export default function ConjunctionPanel() {
   const setConjunctionsVisible = useAtlasStore((s) => s.setConjunctionsVisible)
   const receivedFirstBatch = useAtlasStore((s) => s.conjunctionsReceivedFirstBatch)
   const catalog = useAtlasStore((s) => s.satelliteCatalog)
+  const voiceEnabled = useAtlasStore((s) => s.satelliteVoiceEnabled)
 
   // Drawer is "open" only when conjunctions toggle AND we're on the globe
   // (the dot/line layers are globe-only, so showing the drawer in flat mode
@@ -70,11 +73,29 @@ export default function ConjunctionPanel() {
     [events],
   )
 
+  // Closing the drawer cuts the sentence off. Keyed on the drawer, not on the
+  // selection: picking a satellite on the globe clears the selection too, and
+  // must not silence that satellite's name.
+  useEffect(() => {
+    if (!isOpen) stopSatelliteVoice('conjunction')
+  }, [isOpen])
+
+  // Called from click handlers only — the voice's AudioContext has to start
+  // inside the user gesture. Silent until the catalog has named both.
+  const say = (e: ConjunctionEvent) => {
+    const nameA = catalog?.get(e.noradA)?.name
+    const nameB = catalog?.get(e.noradB)?.name
+    if (!nameA || !nameB) return
+    void speakConjunction({ nameA, nameB, tcaEpochMs: e.tcaEpochMs, missKm: e.missKm })
+  }
+
   const handleClick = (e: ConjunctionEvent) => {
     if (isSelected(e, selected)) {
       setSelected(null)
+      stopSatelliteVoice('conjunction')
     } else {
       setSelected({ noradA: e.noradA, noradB: e.noradB })
+      if (voiceEnabled) say(e)
     }
   }
 
@@ -141,7 +162,7 @@ export default function ConjunctionPanel() {
                 const nameA = catalog?.get(e.noradA)?.name
                 const nameB = catalog?.get(e.noradB)?.name
                 return (
-                  <li key={`${e.noradA}-${e.noradB}-${e.tcaEpochMs}`}>
+                  <li key={`${e.noradA}-${e.noradB}-${e.tcaEpochMs}`} className="relative">
                     <button
                       onClick={() => handleClick(e)}
                       title={`${pairLabel(nameA, e.noradA)} ↔ ${pairLabel(nameB, e.noradB)}`}
@@ -177,12 +198,27 @@ export default function ConjunctionPanel() {
                         {formatCountdown(dt)}
                       </div>
                     </button>
+                    {isSel && nameA && nameB && (
+                      // A sibling of the row button (buttons can't nest), level
+                      // with the countdown. Replays even when "Read aloud" is
+                      // off — it's an explicit ask.
+                      <button
+                        onClick={() => say(e)}
+                        aria-label="Read this conjunction aloud"
+                        title="Read aloud"
+                        className="absolute right-4 bottom-3 text-white/40 hover:text-white/80 transition-colors p-1 -m-1"
+                      >
+                        <SpeakerIcon />
+                      </button>
+                    )}
                   </li>
                 )
               })}
             </ul>
           )}
       </div>
+
+      <VoiceFooter />
     </aside>
   )
 }

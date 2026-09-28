@@ -15,22 +15,22 @@ const MIN = 60 * SEC
 describe('timePhrase', () => {
   // Rounded down, so the voice agrees with the drawer's T- countdown.
   it.each([
-    { at: '5 s after TCA', ms: -5 * SEC, key: 'time:0', spoken: 'In under a minute' },
-    { at: '59.9 s', ms: 59.9 * SEC, key: 'time:0', spoken: 'In under a minute' },
-    { at: '1 min', ms: MIN, key: 'time:1', spoken: 'In one minute' },
-    { at: '12 min 59 s', ms: 12 * MIN + 59 * SEC, key: 'time:12', spoken: 'In twelve minutes' },
-    { at: '59 min 59 s', ms: 59 * MIN + 59 * SEC, key: 'time:59', spoken: 'In fifty-nine minutes' },
-    { at: '1 h', ms: 60 * MIN, key: 'time:60', spoken: 'In one hour' },
-    { at: '1 h 1 min', ms: 61 * MIN, key: 'time:61', spoken: 'In one hour and one minute' },
-    { at: '1 h 15 min', ms: 75 * MIN, key: 'time:75', spoken: 'In one hour and fifteen minutes' },
+    { at: '5 s after TCA', ms: -5 * SEC, key: 'time:0', spoken: 'Close approach in under a minute' },
+    { at: '59.9 s', ms: 59.9 * SEC, key: 'time:0', spoken: 'Close approach in under a minute' },
+    { at: '1 min', ms: MIN, key: 'time:1', spoken: 'Close approach in one minute' },
+    { at: '12 min 59 s', ms: 12 * MIN + 59 * SEC, key: 'time:12', spoken: 'Close approach in twelve minutes' },
+    { at: '59 min 59 s', ms: 59 * MIN + 59 * SEC, key: 'time:59', spoken: 'Close approach in fifty-nine minutes' },
+    { at: '1 h', ms: 60 * MIN, key: 'time:60', spoken: 'Close approach in one hour' },
+    { at: '1 h 1 min', ms: 61 * MIN, key: 'time:61', spoken: 'Close approach in one hour and one minute' },
+    { at: '1 h 15 min', ms: 75 * MIN, key: 'time:75', spoken: 'Close approach in one hour and fifteen minutes' },
     {
       at: '1 h 59 min 59 s',
       ms: 119 * MIN + 59 * SEC,
       key: 'time:119',
-      spoken: 'In one hour and fifty-nine minutes',
+      spoken: 'Close approach in one hour and fifty-nine minutes',
     },
-    { at: '2 h', ms: 120 * MIN, key: 'time:120', spoken: 'In two hours' },
-    { at: '2 h 5 min (past the pack)', ms: 125 * MIN, key: 'time:125', spoken: 'In two hours and five minutes' },
+    { at: '2 h', ms: 120 * MIN, key: 'time:120', spoken: 'Close approach in two hours' },
+    { at: '2 h 5 min (past the pack)', ms: 125 * MIN, key: 'time:125', spoken: 'Close approach in two hours and five minutes' },
   ])('$at → $spoken', ({ ms, key, spoken }) => {
     expect(timePhrase(ms)).toEqual({ key, spoken })
   })
@@ -39,21 +39,21 @@ describe('timePhrase', () => {
 describe('distancePhrase', () => {
   // Nearest 100 m. Wire values are f32, so the cases stay clear of exact .5 boundaries.
   it.each([
-    { km: 0.049, key: 'dist:0', spoken: 'will pass less than a hundred metres from' },
-    { km: 0.051, key: 'dist:100', spoken: 'will pass one hundred metres from' },
-    { km: 0.42, key: 'dist:400', spoken: 'will pass four hundred metres from' },
-    { km: 0.949, key: 'dist:900', spoken: 'will pass nine hundred metres from' },
-    { km: 0.951, key: 'dist:1000', spoken: 'will pass one kilometre from' },
-    { km: 1.44, key: 'dist:1400', spoken: 'will pass one point four kilometres from' },
-    { km: 2.0, key: 'dist:2000', spoken: 'will pass two kilometres from' },
-    { km: 4.96, key: 'dist:5000', spoken: 'will pass five kilometres from' },
+    { km: 0.049, key: 'dist:0', spoken: 'Less than a hundred metres apart' },
+    { km: 0.051, key: 'dist:100', spoken: 'One hundred metres apart' },
+    { km: 0.42, key: 'dist:400', spoken: 'Four hundred metres apart' },
+    { km: 0.949, key: 'dist:900', spoken: 'Nine hundred metres apart' },
+    { km: 0.951, key: 'dist:1000', spoken: 'One kilometre apart' },
+    { km: 1.44, key: 'dist:1400', spoken: 'One point four kilometres apart' },
+    { km: 2.0, key: 'dist:2000', spoken: 'Two kilometres apart' },
+    { km: 4.96, key: 'dist:5000', spoken: 'Five kilometres apart' },
   ])('$km km → $key', ({ km, key, spoken }) => {
     expect(distancePhrase(km)).toEqual({ key, spoken })
   })
 })
 
 describe('conjunctionSentence', () => {
-  it('reads the time, then the first satellite, the distance and the second satellite', () => {
+  it('reads the time, each satellite and the distance as separate lines', () => {
     expect(
       conjunctionSentence({
         nameA: 'STARLINK-3087',
@@ -62,7 +62,7 @@ describe('conjunctionSentence', () => {
         missKm: 0.42,
       }),
     ).toBe(
-      'In twelve minutes, Starlink three zero eight seven will pass four hundred metres from Fengyun one C debris.',
+      'Close approach in twelve minutes. Starlink three zero eight seven. Fengyun one C debris. Four hundred metres apart.',
     )
   })
 })
@@ -98,8 +98,8 @@ describe('planConjunctionUtterance', () => {
     families: { STARLINK: 'family-starlink.mp3' },
     names: { 'FENGYUN 1C DEB': 'name-fengyun-one-c-debris.mp3' },
     phrases: {
-      'time:12': 'phrase-in-twelve-minutes.mp3',
-      'dist:400': 'phrase-will-pass-four-hundred-metres-from.mp3',
+      'time:12': 'phrase-close-approach-in-twelve-minutes.mp3',
+      'dist:400': 'phrase-four-hundred-metres-apart.mp3',
     },
   }
   const speech = {
@@ -109,9 +109,9 @@ describe('planConjunctionUtterance', () => {
     missKm: 0.42,
   }
 
-  it('splices the time phrase, the first name, the distance phrase and the second name', () => {
+  it('plays the time line, both names and the distance line', () => {
     expect(planConjunctionUtterance(speech, manifest)).toEqual({
-      time: 'phrase-in-twelve-minutes.mp3',
+      time: 'phrase-close-approach-in-twelve-minutes.mp3',
       nameA: [
         'family-starlink.mp3',
         'digit-three.mp3',
@@ -119,8 +119,8 @@ describe('planConjunctionUtterance', () => {
         'digit-eight.mp3',
         'digit-seven.mp3',
       ],
-      distance: 'phrase-will-pass-four-hundred-metres-from.mp3',
       nameB: ['name-fengyun-one-c-debris.mp3'],
+      distance: 'phrase-four-hundred-metres-apart.mp3',
     })
   })
 
