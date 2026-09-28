@@ -66,6 +66,8 @@ describe('spokenText', () => {
     ['CREW DRAGON 12', 'CREW Dragon twelve'],
     ['2024-153C', 'two zero two four one five three C'],
     ['LEMUR-2-AHMED-ASRAR', 'Lemur two Ahmed Asrar'],
+    ['AEHF-6 (USA 298)', 'AEHF six'],
+    ['BEIDOU-2 IGSO-1', 'Beidou two IGSO one'],
   ])('%s → %s', (raw, want) => {
     expect(spokenText(raw)).toBe(want)
   })
@@ -89,7 +91,8 @@ describe('voiceClipFile', () => {
 
 describe('planUtterance', () => {
   const manifest: VoiceManifest = {
-    voiceId: 'atlas',
+    voice: 'Atlas',
+    voiceHash: '000000000000',
     model: 'eleven_flash_v2_5',
     format: 'mp3_44100_64',
     digits: {

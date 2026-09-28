@@ -12,6 +12,7 @@ import { useAtlasStore } from '@/stores/useAtlasStore'
 import { fetchSatelliteTLE } from '@/lib/satelliteTLE'
 import type { SatelliteTLE } from '@/lib/satelliteTLE'
 import { SATELLITE_GROUPS } from '@/lib/satellites'
+import { speakSatellite, stopSatelliteVoice } from '@/lib/satelliteVoice'
 import {
   periodMinutes,
   inclinationDegrees,
@@ -35,6 +36,8 @@ export default function SatelliteInfoPanel() {
   const satellitesVisible = useAtlasStore((s) => s.satellitesVisible)
   const globeMode = useAtlasStore((s) => s.globeMode)
   const satelliteCatalog = useAtlasStore((s) => s.satelliteCatalog)
+  const voiceEnabled = useAtlasStore((s) => s.satelliteVoiceEnabled)
+  const setVoiceEnabled = useAtlasStore((s) => s.setSatelliteVoiceEnabled)
 
   const isOpen = selectedSatellite !== null && satellitesVisible && globeMode
   const norad = selectedSatellite?.norad ?? null
@@ -118,6 +121,12 @@ export default function SatelliteInfoPanel() {
     return () => window.clearInterval(id)
   }, [isOpen, satrec])
 
+  // Closing the drawer cuts off a name mid-sentence rather than letting it
+  // play over an empty globe.
+  useEffect(() => {
+    if (!isOpen) stopSatelliteVoice()
+  }, [isOpen])
+
   // Escape closes
   useEffect(() => {
     if (!isOpen) return
@@ -129,7 +138,8 @@ export default function SatelliteInfoPanel() {
   }, [isOpen, setSelectedSatellite])
 
   const catEntry = norad !== null ? satelliteCatalog?.get(norad) : null
-  const titleName = catEntry?.name ?? tle?.name ?? (norad !== null ? `NORAD #${norad}` : '')
+  const spokenName = catEntry?.name ?? tle?.name ?? null
+  const titleName = spokenName ?? (norad !== null ? `NORAD #${norad}` : '')
   const group = catEntry?.group
   const intlDesignator = catEntry?.intlDesignator
   const groupColor = group ? SATELLITE_GROUPS[group].color : '#6B7280'
@@ -152,6 +162,30 @@ export default function SatelliteInfoPanel() {
         <h2 className="text-white/90 text-sm font-medium flex-1 truncate">
           {titleName}
         </h2>
+        {spokenName && (
+          // Replays even when announcements are off — it's an explicit ask.
+          <button
+            onClick={() => void speakSatellite(spokenName)}
+            aria-label="Say satellite name"
+            title="Say name"
+            className="text-white/40 hover:text-white/80 transition-colors p-1 -m-1"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path
+                d="M2.5 6v4h2.5l3.5 3V3L5 6H2.5z"
+                stroke="currentColor"
+                strokeWidth="1.3"
+                strokeLinejoin="round"
+              />
+              <path
+                d="M11 5.5a3.5 3.5 0 010 5M12.8 3.8a6 6 0 010 8.4"
+                stroke="currentColor"
+                strokeWidth="1.3"
+                strokeLinecap="round"
+              />
+            </svg>
+          </button>
+        )}
         <button
           onClick={() => setSelectedSatellite(null)}
           aria-label="Close satellite panel"
@@ -267,6 +301,45 @@ export default function SatelliteInfoPanel() {
           )}
         </section>
       </div>
+
+      <footer className="px-4 py-3 border-t border-white/10 flex items-center justify-between text-[11px]">
+        <button
+          role="switch"
+          aria-checked={voiceEnabled}
+          onClick={() => {
+            if (voiceEnabled) stopSatelliteVoice()
+            setVoiceEnabled(!voiceEnabled)
+          }}
+          className="flex items-center gap-2 text-white/55 hover:text-white/80 transition-colors"
+        >
+          <span
+            aria-hidden
+            className={[
+              'relative inline-block w-7 h-4 rounded-full transition-colors',
+              voiceEnabled ? 'bg-accent/70' : 'bg-white/15',
+            ].join(' ')}
+          >
+            <span
+              className={[
+                'absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-white transition-transform',
+                voiceEnabled ? 'translate-x-3' : 'translate-x-0',
+              ].join(' ')}
+            />
+          </span>
+          Announce names
+        </button>
+        <span className="text-white/30">
+          Voice by{' '}
+          <a
+            href="https://elevenlabs.io"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hover:text-white/60 transition-colors"
+          >
+            elevenlabs.io
+          </a>
+        </span>
+      </footer>
     </aside>
   )
 }

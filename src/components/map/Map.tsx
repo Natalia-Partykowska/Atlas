@@ -38,6 +38,7 @@ import { ConjunctionEndpointLayer } from '@/lib/conjunctionEndpointLayer'
 import { connectOrbitStream } from '@/lib/orbitStream'
 import type { OrbitStreamHandle, ViewportBounds } from '@/lib/orbitStream'
 import { fetchSatelliteCatalog } from '@/lib/satelliteCatalog'
+import { preloadSatelliteVoice, speakSatellite } from '@/lib/satelliteVoice'
 import { fetchSatelliteTLE } from '@/lib/satelliteTLE'
 import { pickNearestSatellite } from '@/lib/satellitePicking'
 import { SatelliteSelectionLayer } from '@/lib/satelliteSelectionLayer'
@@ -893,7 +894,12 @@ export default function Map() {
               lat: c.lat,
             })
             if (hit) {
-              useAtlasStore.getState().setSelectedSatellite({ norad: hit.norad })
+              const store = useAtlasStore.getState()
+              store.setSelectedSatellite({ norad: hit.norad })
+              // Must run inside this click so the browser lets audio start.
+              if (store.satelliteVoiceEnabled) {
+                void speakSatellite(store.satelliteCatalog?.get(hit.norad)?.name ?? hit.name)
+              }
               return
             }
           }
@@ -1261,6 +1267,8 @@ export default function Map() {
   // "NORAD #X". Browser-cached via Cache-Control + ETag on the server.
   useEffect(() => {
     if (!satellitesVisible) return
+    // Voice pack is static, so it warms up even without the orbit backend.
+    preloadSatelliteVoice()
     if (useAtlasStore.getState().satelliteCatalog) return
     const httpBase = import.meta.env.VITE_ORBIT_HTTP_URL
     if (!httpBase) return
