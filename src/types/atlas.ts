@@ -62,6 +62,9 @@ export interface AtlasState {
   satelliteCatalog: Map<number, SatelliteCatalogEntry> | null
   satelliteHover: SatelliteHoverState
   selectedSatellite: { norad: number } | null
+  // "Announce names on click" — speaks the satellite's name from the
+  // ElevenLabs voice pack. Persisted in localStorage; on by default.
+  satelliteVoiceEnabled: boolean
   // Distinguishes "loading" (drawer open, awaiting first 0.1 Hz batch) from
   // "really empty" (server reported zero events). Goes false when the user
   // toggles the drawer on; goes true when any event batch arrives.
@@ -88,6 +91,7 @@ export interface AtlasState {
   setSatelliteCatalog: (catalog: Map<number, SatelliteCatalogEntry> | null) => void
   setSatelliteHover: (hover: SatelliteHoverState) => void
   setSelectedSatellite: (sel: { norad: number } | null) => void
+  setSatelliteVoiceEnabled: (on: boolean) => void
   setTerminatorVisible: (on: boolean) => void
   setAuroraVisible: (on: boolean) => void
   setAuroraInfo: (kp: number, label: string, dataUnavailable: boolean) => void

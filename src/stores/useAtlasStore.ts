@@ -8,6 +8,7 @@ import type {
 } from '@/types/atlas'
 import type { ConjunctionEvent } from '@/lib/orbitStream'
 import type { SatelliteCatalogEntry } from '@/lib/satelliteCatalog'
+import { readVoiceEnabled, writeVoiceEnabled } from '@/lib/satelliteVoice'
 
 const EMPTY_SATELLITE_HOVER: SatelliteHoverState = {
   visible: false,
@@ -36,6 +37,7 @@ export const useAtlasStore = create<AtlasState>((set, get) => ({
   satelliteCatalog: null,
   satelliteHover: EMPTY_SATELLITE_HOVER,
   selectedSatellite: null,
+  satelliteVoiceEnabled: readVoiceEnabled(),
   terminatorVisible: false,
   auroraVisible: false,
   auroraKp: 2,
@@ -135,6 +137,10 @@ export const useAtlasStore = create<AtlasState>((set, get) => ({
         ? { selectedSatellite, selectedConjunction: null }
         : { selectedSatellite: null },
     ),
+  setSatelliteVoiceEnabled: (on: boolean) => {
+    writeVoiceEnabled(on)
+    set({ satelliteVoiceEnabled: on })
+  },
   // Overlay toggles — switching on also moves to base layer
   setTerminatorVisible: (on: boolean) =>
     set(on ? { terminatorVisible: true, activeLayerId: 'base' } : { terminatorVisible: false }),
