@@ -66,6 +66,8 @@ describe('spokenText', () => {
     ['CREW DRAGON 12', 'CREW Dragon twelve'],
     ['2024-153C', 'two zero two four one five three C'],
     ['LEMUR-2-AHMED-ASRAR', 'Lemur two Ahmed Asrar'],
+    ['AEHF-6 (USA 298)', 'AEHF six'],
+    ['BEIDOU-2 IGSO-1', 'Beidou two IGSO one'],
   ])('%s → %s', (raw, want) => {
     expect(spokenText(raw)).toBe(want)
   })

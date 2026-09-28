@@ -146,9 +146,13 @@ function speakPart(part: string): string {
   return runs.map((run) => (/\d/.test(run) ? numberWords(run) : speakLetters(run))).join(' ')
 }
 
+// Acronyms the vowel rule below would wrongly read as words.
+const SPELLED_ACRONYMS = new Set(['AEHF', 'IGSO'])
+
 // Pronounceable all-caps words read better title-cased; short or vowel-poor
 // runs are acronyms the model should spell out (GPS, TDRS, JCSAT).
 function speakLetters(run: string): string {
+  if (SPELLED_ACRONYMS.has(run)) return run
   const vowels = [...run].filter((c) => 'AEIOUY'.includes(c)).length
   if (run.length >= 4 && vowels >= 2 && !run.includes('II')) {
     return run[0] + run.slice(1).toLowerCase()
