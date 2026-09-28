@@ -61,15 +61,27 @@ class FakeAudioContext {
 
 let fetched: string[] = []
 let manifestOk = true
-const speech = { speak: vi.fn(), cancel: vi.fn() }
+let voices: { name: string; lang: string }[] = []
+let voicesChanged: (() => void)[] = []
+const speech = {
+  speak: vi.fn(),
+  cancel: vi.fn(),
+  getVoices: vi.fn(() => voices),
+  addEventListener: vi.fn((type: string, fn: () => void) => {
+    if (type === 'voiceschanged') voicesChanged.push(fn)
+  }),
+}
 
 beforeEach(() => {
   vi.resetModules()
   contexts = []
   fetched = []
   manifestOk = true
+  voices = []
+  voicesChanged = []
   speech.speak.mockClear()
   speech.cancel.mockClear()
+  speech.getVoices.mockClear()
   vi.stubGlobal('AudioContext', FakeAudioContext)
   vi.stubGlobal('speechSynthesis', speech)
   vi.stubGlobal(
@@ -98,7 +110,14 @@ afterEach(() => {
 })
 
 const load = () => import('./satelliteVoice')
-const spokenTexts = () => speech.speak.mock.calls.map(([u]) => (u as { text: string }).text)
+interface SpokenUtterance {
+  text: string
+  lang: string
+  voice?: { name: string; lang: string }
+  pitch?: number
+}
+const utterances = () => speech.speak.mock.calls.map(([u]) => u as SpokenUtterance)
+const spokenTexts = () => utterances().map((u) => u.text)
 
 describe('speakSatellite', () => {
   it('splices family + digit clips, trimmed and back-to-back', async () => {
@@ -238,5 +257,66 @@ describe('voice preference', () => {
     })
     expect(readVoiceEnabled()).toBe(true)
     expect(() => writeVoiceEnabled(false)).not.toThrow()
+  })
+})
+
+describe('browser fallback voice', () => {
+  const SAMANTHA = { name: 'Samantha', lang: 'en-US' }
+  const DANIEL = { name: 'Daniel', lang: 'en-GB' }
+
+  it('prefers a male English system voice, pitched down', async () => {
+    voices = [SAMANTHA, DANIEL]
+    const { speakSatellite, FALLBACK_PITCH } = await load()
+    await speakSatellite('PISAT')
+    const [u] = utterances()
+    expect(u.voice).toBe(DANIEL)
+    expect(u.lang).toBe('en-GB')
+    expect(u.pitch).toBe(FALLBACK_PITCH)
+  })
+
+  it('keeps the browser default when there is no male voice', async () => {
+    voices = [SAMANTHA, { name: 'Daniel', lang: 'es-ES' }]
+    const { speakSatellite } = await load()
+    await speakSatellite('PISAT')
+    const [u] = utterances()
+    expect(u.voice).toBeUndefined()
+    expect(u.pitch).toBeUndefined()
+    expect(u.lang).toBe('en-US')
+  })
+
+  it('picks again once the voice list changes', async () => {
+    voices = [SAMANTHA]
+    const { speakSatellite } = await load()
+    await speakSatellite('PISAT')
+    voices = [SAMANTHA, DANIEL]
+    for (const fn of voicesChanged) fn()
+    await speakSatellite('PISAT')
+    expect(utterances().map((u) => u.voice?.name)).toEqual([undefined, 'Daniel'])
+  })
+
+  it("doesn't cache Chrome's empty first voice list", async () => {
+    const { speakSatellite } = await load()
+    await speakSatellite('PISAT') // voices still loading: []
+    voices = [DANIEL]
+    await speakSatellite('PISAT')
+    expect(utterances().map((u) => u.voice?.name)).toEqual([undefined, 'Daniel'])
+  })
+})
+
+describe('pickFallbackVoice', () => {
+  const v = (name: string, lang = 'en-US') => ({ name, lang }) as SpeechSynthesisVoice
+
+  it('follows the preference order', async () => {
+    const { pickFallbackVoice } = await load()
+    expect(pickFallbackVoice([v('Alex'), v('Daniel', 'en-GB')])?.name).toBe('Daniel')
+    expect(
+      pickFallbackVoice([v('Microsoft Zira - English (United States)'), v('Microsoft David - English (United States)')])
+        ?.name,
+    ).toBe('Microsoft David - English (United States)')
+  })
+
+  it('matches whole names only', async () => {
+    const { pickFallbackVoice } = await load()
+    expect(pickFallbackVoice([v('Alexandra')])).toBeNull()
   })
 })

@@ -67,6 +67,9 @@ function fetchClipBytes(file: string): Promise<ArrayBuffer> {
  * autoplay policy stays happy.
  */
 export function preloadSatelliteVoice(): void {
+  // Chrome only starts loading its voice list on the first getVoices() call;
+  // asking now means the first fallback click can already use a male voice.
+  if (typeof speechSynthesis !== 'undefined') speechSynthesis.getVoices()
   loadVoiceManifest()
     .then((m) => {
       const common = [...Object.values(m.digits), m.families.STARLINK].filter(Boolean)
@@ -131,12 +134,66 @@ export function stopSatelliteVoice(): void {
   if (typeof speechSynthesis !== 'undefined') speechSynthesis.cancel()
 }
 
+// The browser voice is the OS's, and its default is often female (macOS
+// "Samantha") — jarring next to the deep "Atlas" pack. Prefer a male English
+// system voice where the platform ships one, in this order.
+const MALE_VOICES = [
+  'Daniel',
+  'Alex',
+  'Fred',
+  'Aaron',
+  'Arthur',
+  'Google UK English Male',
+  'Microsoft David',
+  'Microsoft Mark',
+  'Microsoft Guy',
+].map((name) => new RegExp(`^${name}\\b`, 'i'))
+/** Nudges the male fallback voice toward the pack's deep register. */
+export const FALLBACK_PITCH = 0.85
+
+// undefined = not chosen yet; null = chosen, and there's no male voice.
+let fallbackVoice: SpeechSynthesisVoice | null | undefined
+let watchingVoices = false
+
+export function pickFallbackVoice(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null {
+  const english = voices.filter((v) => v.lang.toLowerCase().startsWith('en'))
+  for (const pattern of MALE_VOICES) {
+    const match = english.find((v) => pattern.test(v.name))
+    if (match) return match
+  }
+  return null
+}
+
+function chooseFallbackVoice(): SpeechSynthesisVoice | null {
+  if (!watchingVoices) {
+    watchingVoices = true
+    speechSynthesis.addEventListener?.('voiceschanged', () => {
+      fallbackVoice = undefined
+    })
+  }
+  if (fallbackVoice === undefined) {
+    const voices = speechSynthesis.getVoices()
+    // Chrome loads voices asynchronously and returns [] at first — don't
+    // cache that miss.
+    if (voices.length === 0) return null
+    fallbackVoice = pickFallbackVoice(voices)
+  }
+  return fallbackVoice
+}
+
 function speakWithBrowser(rawName: string): void {
   if (typeof speechSynthesis === 'undefined' || typeof SpeechSynthesisUtterance === 'undefined') return
   const text = spokenText(rawName)
   if (!text) return
   const utterance = new SpeechSynthesisUtterance(text)
   utterance.lang = 'en-US'
+  const voice = chooseFallbackVoice()
+  // Only a male voice is pitched down — a lowered default voice sounds off.
+  if (voice) {
+    utterance.voice = voice
+    utterance.lang = voice.lang
+    utterance.pitch = FALLBACK_PITCH
+  }
   speechSynthesis.speak(utterance)
 }
 
