@@ -21,9 +21,12 @@ export interface VoiceManifest {
   families: Record<string, string>
   /** name key (`ISS ZARYA`) → clip file */
   names: Record<string, string>
+  /** conjunction phrase key (`time:12`, `dist:400`) → clip file. Packs made
+   *  before Session 14 don't have it — see `conjunctionVoiceText.ts`. */
+  phrases?: Record<string, string>
 }
 
-export type VoiceClipKind = 'digit' | 'family' | 'name'
+export type VoiceClipKind = 'digit' | 'family' | 'name' | 'phrase'
 
 export const DIGIT_WORDS = [
   'zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine',
@@ -162,7 +165,7 @@ function speakLetters(run: string): string {
 
 // Up to two digits read naturally ("thirty-four"); longer runs digit by digit
 // ("two two five one"), matching how the spliced family digits sound.
-function numberWords(run: string): string {
+export function numberWords(run: string): string {
   const n = run.replace(/^0+(?=\d)/, '')
   if (n.length === 1) return DIGIT_WORDS[Number(n)]
   if (n.length === 2) {
