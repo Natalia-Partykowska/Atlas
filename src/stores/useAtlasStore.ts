@@ -78,8 +78,9 @@ export const useAtlasStore = create<AtlasState>((set, get) => ({
     ),
   setSatelliteCount: (satelliteCount: number) => set({ satelliteCount }),
   // Enabling conjunctions force-enables globe + satellites; disabling clears state.
-  // Either transition resets the "received first batch" flag so the drawer shows
-  // a fresh "Loading…" until the next 0.1 Hz tick lands.
+  // Either transition empties the list and resets the "received first batch"
+  // flag, so the drawer shows a fresh "Loading…" (and no count) until the next
+  // 0.1 Hz tick lands.
   setConjunctionsVisible: (on: boolean) =>
     set(
       on
@@ -87,6 +88,7 @@ export const useAtlasStore = create<AtlasState>((set, get) => ({
             conjunctionsVisible: true,
             globeMode: true,
             satellitesVisible: true,
+            conjunctionEvents: [],
             conjunctionsReceivedFirstBatch: false,
           }
         : {
@@ -99,7 +101,10 @@ export const useAtlasStore = create<AtlasState>((set, get) => ({
   // Replacing the events list also drops the selection if the chosen pair is
   // gone, and flips `receivedFirstBatch` true so the panel can switch from
   // "Loading…" to either the row list or "No close approaches".
+  // Batches keep streaming while the drawer is closed; they're ignored, so
+  // opening it never shows an old batch's count before a fresh one lands.
   setConjunctionEvents: (events: ConjunctionEvent[]) => {
+    if (!get().conjunctionsVisible) return
     const sel = get().selectedConjunction
     if (
       sel &&

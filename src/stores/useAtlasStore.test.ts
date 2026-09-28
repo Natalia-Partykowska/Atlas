@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { createStore } from 'zustand/vanilla'
 import type { AtlasState, TooltipState } from '@/types/atlas'
+import type { ConjunctionEvent } from '@/lib/orbitStream'
+import { useAtlasStore } from './useAtlasStore'
 
 // ── Recreate a fresh store for every test ─────────────────────────────────────
 // We use zustand/vanilla so there's no React dependency.
@@ -344,5 +346,58 @@ describe('setLayerData', () => {
     get().setLayerData({ USA: 1 })
     get().setLayerData(null)
     expect(get().layerData).toBeNull()
+  })
+})
+
+// ── Conjunction batches (real store) ──────────────────────────────────────────
+// The mirrored factory above has no conjunction state, so these run against
+// the real store.
+
+const CONJUNCTION: ConjunctionEvent = {
+  noradA: 44713,
+  noradB: 29228,
+  tcaEpochMs: Date.now() + 12 * 60_000,
+  missKm: 0.42,
+  relVelKms: 11.2,
+  groupA: 'active',
+  groupB: 'debris',
+  midLat: 0,
+  midLng: 0,
+  midAltKm: 550,
+}
+
+describe('conjunction batches', () => {
+  const real = () => useAtlasStore.getState()
+
+  beforeEach(() => {
+    useAtlasStore.setState({
+      conjunctionsVisible: false,
+      conjunctionEvents: [],
+      selectedConjunction: null,
+      conjunctionsReceivedFirstBatch: false,
+    })
+  })
+
+  it('ignores batches while the drawer is closed', () => {
+    real().setConjunctionEvents([CONJUNCTION])
+    expect(real().conjunctionEvents).toEqual([])
+    expect(real().conjunctionsReceivedFirstBatch).toBe(false)
+  })
+
+  it('opening the drawer starts from an empty list', () => {
+    useAtlasStore.setState({
+      conjunctionEvents: [CONJUNCTION],
+      conjunctionsReceivedFirstBatch: true,
+    })
+    real().setConjunctionsVisible(true)
+    expect(real().conjunctionEvents).toEqual([])
+    expect(real().conjunctionsReceivedFirstBatch).toBe(false)
+  })
+
+  it('takes batches while the drawer is open', () => {
+    real().setConjunctionsVisible(true)
+    real().setConjunctionEvents([CONJUNCTION])
+    expect(real().conjunctionEvents).toEqual([CONJUNCTION])
+    expect(real().conjunctionsReceivedFirstBatch).toBe(true)
   })
 })
