@@ -413,6 +413,8 @@ describe('conjunction batches', () => {
     expect(real().conjunctionEvents).toEqual([CONJUNCTION, other])
   })
 
+  // The drawer shows the limited-view message from the feed status; once the
+  // feed is back it waits for a fresh batch ("Loading…").
   it('clears the list and the selection when the server is gone', () => {
     useAtlasStore.setState({
       conjunctionsVisible: true,
@@ -422,7 +424,7 @@ describe('conjunction batches', () => {
     real().clearConjunctionEvents()
     expect(real().conjunctionEvents).toEqual([])
     expect(real().selectedConjunction).toBeNull()
-    expect(real().conjunctionsReceivedFirstBatch).toBe(true)
+    expect(real().conjunctionsReceivedFirstBatch).toBe(false)
   })
 
   it('drops a passed row when it is deselected', () => {

@@ -74,7 +74,7 @@ describe('loadBundledSatellites', () => {
 })
 
 describe('findBundledTLE', () => {
-  it('returns the TLE of a bundled satellite by NORAD number', async () => {
+  it('returns the TLE and group of a bundled satellite by NORAD number', async () => {
     globalThis.fetch = vi.fn(async () => jsonResponse([ISS, GPS])) as typeof fetch
     const { findBundledTLE } = await import('./bundledSatellites')
 
@@ -82,6 +82,7 @@ describe('findBundledTLE', () => {
       name: GPS.name,
       tle1: GPS.tle1,
       tle2: GPS.tle2,
+      group: 'gps',
     })
   })
 

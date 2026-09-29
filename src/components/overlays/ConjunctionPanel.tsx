@@ -33,6 +33,10 @@ export default function ConjunctionPanel() {
   const setSelected = useAtlasStore((s) => s.setSelectedConjunction)
   const setConjunctionsVisible = useAtlasStore((s) => s.setConjunctionsVisible)
   const receivedFirstBatch = useAtlasStore((s) => s.conjunctionsReceivedFirstBatch)
+  // Screening runs on the server: on the bundled satellites there's nothing to
+  // load, so the drawer says why instead of "Loading…" or "No close approaches".
+  const feedLimited = useAtlasStore((s) => s.satelliteFeed.status === 'limited')
+  const canRetry = useAtlasStore((s) => s.satelliteFeed.canRetry)
   const catalog = useAtlasStore((s) => s.satelliteCatalog)
   const voiceEnabled = useAtlasStore((s) => s.satelliteVoiceEnabled)
 
@@ -126,7 +130,7 @@ export default function ConjunctionPanel() {
           <h2 className="text-white/90 text-sm font-medium flex-1">
             Conjunctions
             {/* No count while "Loading…" — it would be a guess, not a result. */}
-            {receivedFirstBatch && (
+            {receivedFirstBatch && !feedLimited && (
               <span className="text-white/40 text-xs font-normal ml-2">
                 {sorted.length.toLocaleString()} {sorted.length === 1 ? 'event' : 'events'}
               </span>
@@ -149,7 +153,16 @@ export default function ConjunctionPanel() {
         </header>
 
         <div className="flex-1 overflow-y-auto">
-          {!receivedFirstBatch ? (
+          {feedLimited ? (
+            <div className="px-4 py-4 text-xs space-y-1">
+              <p className="text-white/60">
+                {canRetry
+                  ? 'Conjunction screening needs the live feed.'
+                  : 'Conjunction screening needs the live orbit server.'}
+              </p>
+              {canRetry && <p className="text-white/35">Reconnecting…</p>}
+            </div>
+          ) : !receivedFirstBatch ? (
             <p className="text-white/50 text-xs px-4 py-4 flex items-center gap-2">
               <span
                 aria-hidden

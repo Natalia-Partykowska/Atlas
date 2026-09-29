@@ -68,11 +68,14 @@ describe('SatelliteInfoPanel orbit data without the server', () => {
   it('uses the bundled TLE when the server fetch fails', async () => {
     useAtlasStore.setState({ satelliteFeed: feed('limited') })
     vi.mocked(fetchSatelliteTLE).mockRejectedValue(new TypeError('Failed to fetch'))
-    vi.mocked(findBundledTLE).mockResolvedValue(ISS_TLE)
+    vi.mocked(findBundledTLE).mockResolvedValue({ ...ISS_TLE, group: 'iss' })
     render(<SatelliteInfoPanel />)
     open(25544)
 
     expect(await screen.findByText('51.63°')).toBeInTheDocument()
+    // The catalog isn't loaded, but the bundled file knows the group.
+    expect(screen.getByText('iss')).toBeInTheDocument()
+    expect(screen.queryByText(/unknown group/i)).not.toBeInTheDocument()
     expect(screen.getByText('Period')).toBeInTheDocument()
     expect(findBundledTLE).toHaveBeenCalledWith(25544)
     expect(screen.queryByText(/failed to fetch/i)).not.toBeInTheDocument()

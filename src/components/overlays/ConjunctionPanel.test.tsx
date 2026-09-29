@@ -5,6 +5,10 @@ import { useAtlasStore } from '@/stores/useAtlasStore'
 import { speakConjunction, stopSatelliteVoice } from '@/lib/satelliteVoice'
 import type { ConjunctionEvent } from '@/lib/orbitStream'
 import type { SatelliteCatalogEntry } from '@/lib/satelliteCatalog'
+import { SATELLITE_FEED_OFF } from '@/lib/satelliteFeed'
+import type { SatelliteFeedStatus } from '@/lib/satelliteFeed'
+
+const feed = (status: SatelliteFeedStatus, canRetry = true) => ({ ...SATELLITE_FEED_OFF, status, canRetry })
 
 // The store reads the saved preference through this module too.
 vi.mock('@/lib/satelliteVoice', () => ({
@@ -50,6 +54,7 @@ beforeEach(() => {
     selectedSatellite: null,
     satelliteCatalog: CATALOG,
     satelliteVoiceEnabled: true,
+    satelliteFeed: feed('live'),
   })
 })
 
@@ -251,5 +256,55 @@ describe('ConjunctionPanel voice', () => {
     fireEvent.click(toggle)
     expect(useAtlasStore.getState().satelliteVoiceEnabled).toBe(false)
     expect(stopSatelliteVoice).toHaveBeenCalledWith()
+  })
+})
+
+// ── Without the live feed ─────────────────────────────────────────────────────
+
+describe('ConjunctionPanel without the live feed', () => {
+  const count = () => screen.queryByText(/^\d+ events?$/)
+
+  it('says screening needs the live feed instead of "No close approaches"', () => {
+    // What the store holds after the feed falls back: no events, no batch yet.
+    useAtlasStore.setState({
+      satelliteFeed: feed('limited'),
+      conjunctionEvents: [],
+      conjunctionsReceivedFirstBatch: false,
+    })
+    render(<ConjunctionPanel />)
+    expect(screen.getByText('Conjunction screening needs the live feed.')).toBeInTheDocument()
+    expect(screen.getByText('Reconnecting…')).toBeInTheDocument()
+    expect(screen.queryByText(/no close approaches/i)).not.toBeInTheDocument()
+    expect(screen.queryByText('Loading…')).not.toBeInTheDocument()
+    expect(count()).not.toBeInTheDocument()
+  })
+
+  it('names the missing server when none is configured', () => {
+    useAtlasStore.setState({
+      satelliteFeed: feed('limited', false),
+      conjunctionEvents: [],
+      conjunctionsReceivedFirstBatch: false,
+    })
+    render(<ConjunctionPanel />)
+    expect(screen.getByText('Conjunction screening needs the live orbit server.')).toBeInTheDocument()
+    expect(screen.queryByText('Reconnecting…')).not.toBeInTheDocument()
+  })
+
+  it('goes back to Loading… when the feed is live again', () => {
+    useAtlasStore.setState({
+      satelliteFeed: feed('limited'),
+      conjunctionEvents: [],
+      conjunctionsReceivedFirstBatch: false,
+    })
+    render(<ConjunctionPanel />)
+    act(() => useAtlasStore.setState({ satelliteFeed: feed('live') }))
+    expect(screen.getByText('Loading…')).toBeInTheDocument()
+  })
+
+  it('keeps the rows during the short grace after a drop', () => {
+    useAtlasStore.setState({ satelliteFeed: feed('reconnecting') })
+    render(<ConjunctionPanel />)
+    expect(row()).toBeInTheDocument()
+    expect(screen.queryByText(/needs the live feed/)).not.toBeInTheDocument()
   })
 })

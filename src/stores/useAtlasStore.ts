@@ -128,13 +128,13 @@ export const useAtlasStore = create<AtlasState>((set, get) => ({
   },
   // The server is gone (or we fell back to local positions): no screening, so
   // empty the list and drop the selection. An empty batch can't do this any
-  // more — merging keeps what's there. Also ends any "Loading…": with no
-  // server there's nothing to wait for.
+  // more — merging keeps what's there. The drawer says why from the feed
+  // status, and once the feed is back it waits for a fresh batch.
   clearConjunctionEvents: () =>
     set({
       conjunctionEvents: [],
       selectedConjunction: null,
-      conjunctionsReceivedFirstBatch: true,
+      conjunctionsReceivedFirstBatch: false,
     }),
   // Selecting a conjunction clears any in-flight satellite selection (mutually
   // exclusive — one drawer at a time, one camera target at a time). Letting go

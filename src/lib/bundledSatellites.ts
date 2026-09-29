@@ -1,4 +1,4 @@
-import type { SatTLEEntry } from './satellites'
+import type { SatGroup, SatTLEEntry } from './satellites'
 import type { SatelliteTLE } from './satelliteTLE'
 
 // The ~262 satellites bundled with the app (ISS, stations, GPS, a Starlink
@@ -8,9 +8,12 @@ import type { SatelliteTLE } from './satelliteTLE'
 
 export const BUNDLED_SATELLITES_URL = '/data/satellites.json'
 
+/** A bundled satellite's TLE, plus its group for when the catalog isn't loaded. */
+export type BundledTLE = SatelliteTLE & { group: SatGroup }
+
 let entries: SatTLEEntry[] | null = null
 let inflight: Promise<SatTLEEntry[]> | null = null
-let byNorad: Map<number, SatelliteTLE> | null = null
+let byNorad: Map<number, BundledTLE> | null = null
 
 /** The NORAD catalog number in columns 3–7 of TLE line 1, or null. */
 export function noradFromTLELine1(line1: string): number | null {
@@ -38,7 +41,7 @@ export function loadBundledSatellites(): Promise<SatTLEEntry[]> {
 
 /** The bundled TLE for `norad`, or null when it isn't bundled or the file
  *  can't be loaded. */
-export async function findBundledTLE(norad: number): Promise<SatelliteTLE | null> {
+export async function findBundledTLE(norad: number): Promise<BundledTLE | null> {
   let list: SatTLEEntry[]
   try {
     list = await loadBundledSatellites()
@@ -49,7 +52,7 @@ export async function findBundledTLE(norad: number): Promise<SatelliteTLE | null
     byNorad = new Map()
     for (const e of list) {
       const n = noradFromTLELine1(e.tle1)
-      if (n !== null) byNorad.set(n, { name: e.name, tle1: e.tle1, tle2: e.tle2 })
+      if (n !== null) byNorad.set(n, { name: e.name, tle1: e.tle1, tle2: e.tle2, group: e.group })
     }
   }
   return byNorad.get(norad) ?? null

@@ -13,6 +13,7 @@ import { fetchSatelliteTLE } from '@/lib/satelliteTLE'
 import type { SatelliteTLE } from '@/lib/satelliteTLE'
 import { findBundledTLE } from '@/lib/bundledSatellites'
 import { SATELLITE_GROUPS } from '@/lib/satellites'
+import type { SatGroup } from '@/lib/satellites'
 import { speakSatellite, stopSatelliteVoice } from '@/lib/satelliteVoice'
 import { SpeakerIcon, VoiceFooter } from './VoiceControls'
 import {
@@ -42,7 +43,10 @@ interface TleError {
   needsLiveFeed: boolean
 }
 
-async function resolveTLE(norad: number): Promise<{ tle: SatelliteTLE; source: TleSource }> {
+// A bundled TLE also carries the group, for when the catalog isn't loaded.
+type ResolvedTLE = SatelliteTLE & { group?: SatGroup }
+
+async function resolveTLE(norad: number): Promise<{ tle: ResolvedTLE; source: TleSource }> {
   const httpBase = import.meta.env.VITE_ORBIT_HTTP_URL
   try {
     if (!httpBase) throw new Error('TLE source unavailable')
@@ -65,7 +69,7 @@ export default function SatelliteInfoPanel() {
   const isOpen = selectedSatellite !== null && satellitesVisible && globeMode
   const norad = selectedSatellite?.norad ?? null
 
-  const [tle, setTle] = useState<SatelliteTLE | null>(null)
+  const [tle, setTle] = useState<ResolvedTLE | null>(null)
   const [tleLoading, setTleLoading] = useState(false)
   const [tleError, setTleError] = useState<TleError | null>(null)
   const [live, setLive] = useState<LiveState | null>(null)
@@ -177,7 +181,7 @@ export default function SatelliteInfoPanel() {
   const catEntry = norad !== null ? satelliteCatalog?.get(norad) : null
   const spokenName = catEntry?.name ?? tle?.name ?? null
   const titleName = spokenName ?? (norad !== null ? `NORAD #${norad}` : '')
-  const group = catEntry?.group
+  const group = catEntry?.group ?? tle?.group
   const intlDesignator = catEntry?.intlDesignator
   const groupColor = group ? SATELLITE_GROUPS[group].color : '#6B7280'
 
