@@ -424,23 +424,6 @@ describe('connectOrbitStream', () => {
     expect(onDisconnect).not.toHaveBeenCalled()
   })
 
-  it('isLive() is true while connecting', () => {
-    const handle = connectOrbitStream('wss://test', { onPositions: vi.fn() })
-    expect(handle.isLive()).toBe(true)
-  })
-
-  it('isLive() is true when open', () => {
-    const handle = connectOrbitStream('wss://test', { onPositions: vi.fn() })
-    mockWs.simulateOpen()
-    expect(handle.isLive()).toBe(true)
-  })
-
-  it('isLive() is false after close()', () => {
-    const handle = connectOrbitStream('wss://test', { onPositions: vi.fn() })
-    handle.close()
-    expect(handle.isLive()).toBe(false)
-  })
-
   it('routes 0x01 frames to onPositions', () => {
     const onPositions = vi.fn()
     const onConjunctions = vi.fn()

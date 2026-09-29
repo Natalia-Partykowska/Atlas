@@ -1,5 +1,6 @@
 import type { ConjunctionEvent } from '@/lib/orbitStream'
 import type { SatelliteCatalogEntry } from '@/lib/satelliteCatalog'
+import type { SatelliteFeedState } from '@/lib/satelliteFeed'
 
 export type ISO3 = string
 export type CountryDataMap = Record<ISO3, number>
@@ -56,6 +57,13 @@ export interface AtlasState {
   // fallback). Reset to 0 when the satellite layer is disabled or the WS
   // mode goes idle. Surfaced in the top-left BrandStrip live readout.
   satelliteCount: number
+  // Where the satellites on screen come from (live server or the bundled
+  // set) and when the next reconnect attempt runs. Written only by the feed
+  // controller in Map.tsx; read by the UI.
+  satelliteFeed: SatelliteFeedState
+  // Bumped by "Retry now". Map.tsx subscribes to it and asks the feed to
+  // try the server straight away.
+  satelliteRetryRequest: number
   conjunctionsVisible: boolean
   conjunctionEvents: ConjunctionEvent[]
   selectedConjunction: { noradA: number; noradB: number } | null
@@ -85,6 +93,8 @@ export interface AtlasState {
   setSubmarineCablesVisible: (on: boolean) => void
   setSatellitesVisible: (on: boolean) => void
   setSatelliteCount: (n: number) => void
+  setSatelliteFeed: (state: SatelliteFeedState) => void
+  requestSatelliteRetry: () => void
   setConjunctionsVisible: (on: boolean) => void
   mergeConjunctionBatch: (events: ConjunctionEvent[]) => void
   clearConjunctionEvents: () => void

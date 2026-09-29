@@ -3,6 +3,7 @@ import { createStore } from 'zustand/vanilla'
 import type { AtlasState, TooltipState } from '@/types/atlas'
 import type { ConjunctionEvent } from '@/lib/orbitStream'
 import { useAtlasStore } from './useAtlasStore'
+import { SATELLITE_FEED_OFF } from '@/lib/satelliteFeed'
 
 // ── Recreate a fresh store for every test ─────────────────────────────────────
 // We use zustand/vanilla so there's no React dependency.
@@ -445,5 +446,49 @@ describe('conjunction batches', () => {
     real().setSelectedSatellite({ norad: 25544 })
     expect(real().selectedConjunction).toBeNull()
     expect(real().conjunctionEvents).toEqual([])
+  })
+})
+
+// ── Satellite feed status ─────────────────────────────────────────────────────
+
+describe('satellite feed status', () => {
+  const real = () => useAtlasStore.getState()
+
+  beforeEach(() => {
+    useAtlasStore.setState({
+      satellitesVisible: false,
+      satelliteFeed: SATELLITE_FEED_OFF,
+      satelliteRetryRequest: 0,
+    })
+  })
+
+  it('starts off, with no retry requested', () => {
+    expect(real().satelliteFeed).toEqual(SATELLITE_FEED_OFF)
+    expect(real().satelliteRetryRequest).toBe(0)
+  })
+
+  it('stores what the feed publishes', () => {
+    const limited = {
+      ...SATELLITE_FEED_OFF,
+      status: 'limited' as const,
+      canRetry: true,
+      nextRetryAt: 1_790_000_004_000,
+      lastLiveCount: 18_049,
+    }
+    real().setSatelliteFeed(limited)
+    expect(real().satelliteFeed).toEqual(limited)
+  })
+
+  it('counts each Retry now request', () => {
+    real().requestSatelliteRetry()
+    real().requestSatelliteRetry()
+    expect(real().satelliteRetryRequest).toBe(2)
+  })
+
+  it('turning satellites off resets the feed status', () => {
+    real().setSatellitesVisible(true)
+    real().setSatelliteFeed({ ...SATELLITE_FEED_OFF, status: 'limited', canRetry: true })
+    real().setSatellitesVisible(false)
+    expect(real().satelliteFeed).toEqual(SATELLITE_FEED_OFF)
   })
 })

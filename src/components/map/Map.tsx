@@ -157,6 +157,7 @@ export default function Map() {
   const setSatelliteCatalog = useAtlasStore((s) => s.setSatelliteCatalog)
   const setSatelliteHover = useAtlasStore((s) => s.setSatelliteHover)
   const setSatelliteCount = useAtlasStore((s) => s.setSatelliteCount)
+  const setSatelliteFeed = useAtlasStore((s) => s.setSatelliteFeed)
   const selectedSatellite = useAtlasStore((s) => s.selectedSatellite)
   const terminatorVisible = useAtlasStore((s) => s.terminatorVisible)
   const setTerminatorVisible = useAtlasStore((s) => s.setTerminatorVisible)
@@ -1477,6 +1478,7 @@ export default function Map() {
           conjEndpointLayerRef.current?.setData(null, latestPositionsByNoradRef.current)
         },
         conjunctions: mergeConjunctionBatch,
+        status: setSatelliteFeed,
       },
     })
 
@@ -1493,9 +1495,16 @@ export default function Map() {
       map.on('moveend', moveendHandler)
     }
 
+    // "Retry now" bumps a counter in the store. Subscribing here (not as an
+    // effect dependency) keeps a click from tearing down the stream.
+    const unsubscribeRetry = useAtlasStore.subscribe((state, prev) => {
+      if (state.satelliteRetryRequest !== prev.satelliteRetryRequest) feed.retryNow()
+    })
+
     feed.start()
 
     return () => {
+      unsubscribeRetry()
       feed.stop()
       // The toggle stays on (the user's intent is preserved), but nothing from
       // this run stays on screen or in the lookup the pickers use.
@@ -1509,7 +1518,7 @@ export default function Map() {
         map.off('moveend', moveendHandler)
       }
     }
-  }, [satellitesVisible, globeMode, isMapLoaded, mergeConjunctionBatch, clearConjunctionEvents, setSatelliteCount])
+  }, [satellitesVisible, globeMode, isMapLoaded, mergeConjunctionBatch, clearConjunctionEvents, setSatelliteCount, setSatelliteFeed])
 
   // ─── Conjunction overlay (selection-only) ─────────────────────────────────
   //
