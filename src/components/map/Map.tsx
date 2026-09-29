@@ -30,7 +30,8 @@ import {
   packSatellitePositions,
   SATELLITE_GROUPS,
 } from '@/lib/satellites'
-import type { ParsedSatellite, SatTLEEntry, SatPosition } from '@/lib/satellites'
+import type { ParsedSatellite, SatPosition } from '@/lib/satellites'
+import { loadBundledSatellites } from '@/lib/bundledSatellites'
 import { SatelliteLayer } from '@/lib/satelliteLayer'
 import { ConjunctionLineLayer } from '@/lib/conjunctionLineLayer'
 import { ConjunctionMidpointLayer } from '@/lib/conjunctionMidpointLayer'
@@ -136,6 +137,10 @@ export default function Map() {
   // refresh below to keep the closed-loop ring oriented to current Earth
   // rotation as time passes.
   const selectedSatrecRef = useRef<SatRec | null>(null)
+  // The selection the camera last flew to, so resolving its orbit again (the
+  // live feed came back) doesn't move the camera a second time. Each click
+  // is a new object, so clicking the same satellite again still flies.
+  const flownToSelectionRef = useRef<{ norad: number } | null>(null)
 
   const setTooltip = useAtlasStore((s) => s.setTooltip)
   const setSelectedCountry = useAtlasStore((s) => s.setSelectedCountry)
@@ -158,6 +163,7 @@ export default function Map() {
   const setSatelliteHover = useAtlasStore((s) => s.setSatelliteHover)
   const setSatelliteCount = useAtlasStore((s) => s.setSatelliteCount)
   const setSatelliteFeed = useAtlasStore((s) => s.setSatelliteFeed)
+  const feedLive = useAtlasStore((s) => s.satelliteFeed.status === 'live')
   const selectedSatellite = useAtlasStore((s) => s.selectedSatellite)
   const terminatorVisible = useAtlasStore((s) => s.terminatorVisible)
   const setTerminatorVisible = useAtlasStore((s) => s.setTerminatorVisible)
@@ -1262,14 +1268,19 @@ export default function Map() {
       .catch((err) => console.error('Submarine cables fetch failed:', err))
   }, [submarineCablesVisible, isMapLoaded])
 
-  // ─── Satellite catalog fetch (one-shot per enable) ──────────────────────
+  // Voice pack is static, so it warms up even without the orbit backend.
+  useEffect(() => {
+    if (satellitesVisible) preloadSatelliteVoice()
+  }, [satellitesVisible])
+
+  // ─── Satellite catalog fetch ─────────────────────────────────────────────
   // Names + intl designators for the full ~17k catalog. Without this, the WS
   // path only carries NORAD numbers and the hover tooltip would fall back to
   // "NORAD #X". Browser-cached via Cache-Control + ETag on the server.
+  // Fetched when satellites turn on, and again when the live feed comes back
+  // if that first fetch failed because the server was down.
   useEffect(() => {
     if (!satellitesVisible) return
-    // Voice pack is static, so it warms up even without the orbit backend.
-    preloadSatelliteVoice()
     if (useAtlasStore.getState().satelliteCatalog) return
     const httpBase = import.meta.env.VITE_ORBIT_HTTP_URL
     if (!httpBase) return
@@ -1284,7 +1295,7 @@ export default function Map() {
     return () => {
       cancelled = true
     }
-  }, [satellitesVisible, setSatelliteCatalog])
+  }, [satellitesVisible, feedLive, setSatelliteCatalog])
 
   // ─── Satellite overlay ──────────────────────────────────────────────────
   useEffect(() => {
@@ -1430,8 +1441,8 @@ export default function Map() {
 
     // Local SGP4 propagation — the only writer while the feed is in
     // `fallback`. The feed aborts `signal` when it leaves `fallback`, which
-    // stops the loop and cancels a pending fetch, so a late tick or a late
-    // fetch can't paint over the live stream.
+    // stops the loop, and a load that lands after that is ignored, so a late
+    // tick or a late load can't paint over the live stream.
     const startLocal = (sats: ParsedSatellite[], signal: AbortSignal) => {
       if (sats.length === 0) return
       const paint = () => {
@@ -1449,17 +1460,13 @@ export default function Map() {
         startLocal(satelliteTLERef.current, signal)
         return
       }
-      fetch('/data/satellites.json', { signal })
-        .then((r) => r.json())
-        .then((data: SatTLEEntry[]) => {
+      loadBundledSatellites()
+        .then((data) => {
           if (signal.aborted) return
-          satelliteTLERef.current = parseTLEData(data)
+          satelliteTLERef.current ??= parseTLEData(data)
           startLocal(satelliteTLERef.current, signal)
         })
-        .catch((err) => {
-          if ((err as Error).name === 'AbortError') return
-          console.error('Satellite data fetch failed:', err)
-        })
+        .catch((err) => console.error('Satellite data fetch failed:', err))
     }
 
     const feed = createSatelliteFeed({
@@ -1623,7 +1630,9 @@ export default function Map() {
   // This effect itself paints the orbit + halo *immediately* after satrec
   // resolves (so click → halo latency is ~0, not "wait for next batch") and
   // eases the camera to the satellite. It also clears all of the above on
-  // deselect / leaving globe mode.
+  // deselect / leaving globe mode. When the live feed comes back it runs
+  // again to fill in an orbit that couldn't be resolved during the outage,
+  // without moving the camera.
   useEffect(() => {
     selectedSatelliteRef.current = selectedSatellite
 
@@ -1635,10 +1644,15 @@ export default function Map() {
 
     if (!selectedSatellite || !globeMode) {
       selectedSatrecRef.current = null
+      flownToSelectionRef.current = null
       orbitLayer?.setData(null)
       selLayer?.setData(null)
       return
     }
+
+    const isNewSelection = flownToSelectionRef.current !== selectedSatellite
+    if (!isNewSelection && selectedSatrecRef.current) return
+    flownToSelectionRef.current = selectedSatellite
 
     const norad = selectedSatellite.norad
     let cancelled = false
@@ -1659,7 +1673,7 @@ export default function Map() {
           ? [points[0].lng, points[0].lat]
           : null
       // Centre only — the user's zoom is kept.
-      if (center) map.easeTo({ center, duration: 600 })
+      if (center && isNewSelection) map.easeTo({ center, duration: 600 })
     }
 
     // Local-fallback path: bundled satrec already in memory. Use it directly
@@ -1706,7 +1720,7 @@ export default function Map() {
     return () => {
       cancelled = true
     }
-  }, [selectedSatellite, globeMode, isMapLoaded])
+  }, [selectedSatellite, globeMode, isMapLoaded, feedLive])
 
   // ─── Terminator overlay ──────────────────────────────────────────────────
   useEffect(() => {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   twoline2satrec,
   propagate,
@@ -11,6 +11,7 @@ import type { SatRec } from 'satellite.js'
 import { useAtlasStore } from '@/stores/useAtlasStore'
 import { fetchSatelliteTLE } from '@/lib/satelliteTLE'
 import type { SatelliteTLE } from '@/lib/satelliteTLE'
+import { findBundledTLE } from '@/lib/bundledSatellites'
 import { SATELLITE_GROUPS } from '@/lib/satellites'
 import { speakSatellite, stopSatelliteVoice } from '@/lib/satelliteVoice'
 import { SpeakerIcon, VoiceFooter } from './VoiceControls'
@@ -31,23 +32,50 @@ interface LiveState {
   vKms: number
 }
 
+// The server's TLE is current. The bundled one is months old and only stands
+// in while the server can't be reached.
+type TleSource = 'server' | 'bundled'
+
+interface TleError {
+  message: string
+  /** The server couldn't be reached and the satellite isn't bundled. */
+  needsLiveFeed: boolean
+}
+
+async function resolveTLE(norad: number): Promise<{ tle: SatelliteTLE; source: TleSource }> {
+  const httpBase = import.meta.env.VITE_ORBIT_HTTP_URL
+  try {
+    if (!httpBase) throw new Error('TLE source unavailable')
+    return { tle: await fetchSatelliteTLE(httpBase, norad), source: 'server' }
+  } catch (err) {
+    const bundled = await findBundledTLE(norad)
+    if (bundled) return { tle: bundled, source: 'bundled' }
+    throw err
+  }
+}
+
 export default function SatelliteInfoPanel() {
   const selectedSatellite = useAtlasStore((s) => s.selectedSatellite)
   const setSelectedSatellite = useAtlasStore((s) => s.setSelectedSatellite)
   const satellitesVisible = useAtlasStore((s) => s.satellitesVisible)
   const globeMode = useAtlasStore((s) => s.globeMode)
   const satelliteCatalog = useAtlasStore((s) => s.satelliteCatalog)
+  const feedLive = useAtlasStore((s) => s.satelliteFeed.status === 'live')
 
   const isOpen = selectedSatellite !== null && satellitesVisible && globeMode
   const norad = selectedSatellite?.norad ?? null
 
   const [tle, setTle] = useState<SatelliteTLE | null>(null)
   const [tleLoading, setTleLoading] = useState(false)
-  const [tleError, setTleError] = useState<string | null>(null)
+  const [tleError, setTleError] = useState<TleError | null>(null)
   const [live, setLive] = useState<LiveState | null>(null)
+  const tleSourceRef = useRef<TleSource | null>(null)
+  const [reloadTle, setReloadTle] = useState(0)
 
-  // Fetch TLE when selection changes
+  // Resolve the TLE when the selection changes: the server first, then the
+  // bundled satellites when the server can't be reached.
   useEffect(() => {
+    tleSourceRef.current = null
     if (!isOpen || norad === null) {
       setTle(null)
       setTleLoading(false)
@@ -55,22 +83,23 @@ export default function SatelliteInfoPanel() {
       setLive(null)
       return
     }
-    const httpBase = import.meta.env.VITE_ORBIT_HTTP_URL
-    if (!httpBase) {
-      setTleError('TLE source unavailable')
-      return
-    }
     let cancelled = false
     setTle(null)
     setLive(null)
     setTleError(null)
     setTleLoading(true)
-    fetchSatelliteTLE(httpBase, norad)
-      .then((t) => {
-        if (!cancelled) setTle(t)
+    resolveTLE(norad)
+      .then(({ tle: t, source }) => {
+        if (cancelled) return
+        tleSourceRef.current = source
+        setTle(t)
       })
       .catch((err) => {
-        if (!cancelled) setTleError(String(err?.message ?? err))
+        if (cancelled) return
+        // Without the live feed the server's error is just "unreachable";
+        // say what's actually missing instead.
+        const needsLiveFeed = useAtlasStore.getState().satelliteFeed.status !== 'live'
+        setTleError({ message: String(err?.message ?? err), needsLiveFeed })
       })
       .finally(() => {
         if (!cancelled) setTleLoading(false)
@@ -78,7 +107,14 @@ export default function SatelliteInfoPanel() {
     return () => {
       cancelled = true
     }
-  }, [isOpen, norad])
+  }, [isOpen, norad, reloadTle])
+
+  // When the live feed comes back, swap a bundled (or missing) TLE for the
+  // server's current one. Runs only on that change, so opening the drawer
+  // doesn't fetch twice.
+  useEffect(() => {
+    if (feedLive && isOpen && tleSourceRef.current !== 'server') setReloadTle((n) => n + 1)
+  }, [feedLive]) // isOpen deliberately left out: see above
 
   const satrec = useMemo<SatRec | null>(() => {
     if (!tle) return null
@@ -221,8 +257,10 @@ export default function SatelliteInfoPanel() {
               />
               Loading orbit…
             </p>
+          ) : tleError?.needsLiveFeed ? (
+            <p className="text-white/40 text-xs">Orbit data needs the live feed.</p>
           ) : tleError ? (
-            <p className="text-red-300/80 text-xs">{tleError}</p>
+            <p className="text-red-300/80 text-xs">{tleError.message}</p>
           ) : live ? (
             <div className="text-xs text-white/65 tabular-nums space-y-1">
               <div className="flex justify-between">
