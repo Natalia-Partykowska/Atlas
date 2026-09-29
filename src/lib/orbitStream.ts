@@ -207,8 +207,11 @@ export function connectOrbitStream(
     }
   })
 
+  // A failed socket fires `error` and then `close`; report that failure once.
+  let ended = false
   const handleEnd = () => {
-    if (closedByCaller) return
+    if (closedByCaller || ended) return
+    ended = true
     cbs.onDisconnect?.()
   }
   ws.addEventListener('close', handleEnd)
