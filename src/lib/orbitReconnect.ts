@@ -20,8 +20,12 @@ export const RETRY_JITTER = 0.2
  *  if its socket is still open or connecting. */
 export const FIRST_BATCH_DEADLINE_MS = 8_000
 /** After a live stream drops, the last frame stays on screen this long while
- *  the first reconnect runs, so a brief blip never shows the limited view. */
+ *  it reconnects, so a brief blip never shows the limited view. */
 export const DROP_GRACE_MS = 3_000
+/** Retry pace during that grace. The backoff starts only after it: with the
+ *  1 s → 2 s steps, the third attempt lands right as a 3 s grace ends, so a
+ *  1–3 s blip used to flash the limited view. */
+export const GRACE_RETRY_MS = 500
 
 /**
  * Delay before retry number `attempt` (0-based): 1, 2, 4, 8, 16, 32 s, then
@@ -31,7 +35,11 @@ export const DROP_GRACE_MS = 3_000
 export function retryDelayMs(attempt: number, random: number = Math.random()): number {
   // NaN and negatives count as the first attempt; +Infinity lands on the cap.
   const n = attempt > 0 ? Math.floor(attempt) : 0
-  const base = Math.min(RETRY_BASE_MS * 2 ** n, RETRY_MAX_MS)
+  return withJitter(Math.min(RETRY_BASE_MS * 2 ** n, RETRY_MAX_MS), random)
+}
+
+/** `ms` moved by up to ±20 %; `random` is a value in [0, 1). */
+export function withJitter(ms: number, random: number): number {
   const r = Number.isFinite(random) ? Math.min(Math.max(random, 0), 1) : 0.5
-  return Math.floor(base * (1 + RETRY_JITTER * (2 * r - 1)))
+  return Math.floor(ms * (1 + RETRY_JITTER * (2 * r - 1)))
 }

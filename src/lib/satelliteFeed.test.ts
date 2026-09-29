@@ -1,7 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { createSatelliteFeed } from './satelliteFeed'
 import type { SatelliteFeedBrowser, SatelliteFeedHooks, SatelliteFeedState } from './satelliteFeed'
-import { DROP_GRACE_MS, FIRST_BATCH_DEADLINE_MS, RETRY_MAX_MS } from './orbitReconnect'
+import {
+  DROP_GRACE_MS,
+  FIRST_BATCH_DEADLINE_MS,
+  GRACE_RETRY_MS,
+  RETRY_MAX_MS,
+} from './orbitReconnect'
 import type {
   ConjunctionEvent,
   OrbitStreamCallbacks,
@@ -454,11 +459,45 @@ describe('createSatelliteFeed — losing a live stream', () => {
     expect(f.feed.mode).toBe('ws')
   })
 
-  it('backs off from 1 s when the immediate reconnect fails', () => {
+  it('retries every 0.5 s during the grace without growing the backoff', () => {
+    const f = live()
+    f.socket().fail() // drop → immediate reconnect
+    f.socket().fail() // which fails
+    expect(f.feed.mode).toBe('reconnecting')
+    expect(f.status()).toMatchObject({ nextRetryAt: Date.now() + GRACE_RETRY_MS })
+    vi.advanceTimersByTime(GRACE_RETRY_MS)
+    f.socket().fail()
+    expect(f.status()).toMatchObject({ nextRetryAt: Date.now() + GRACE_RETRY_MS })
+  })
+
+  // Found by the live check: with the server back after 1.5 s, the attempts
+  // at 0 and 1 s failed and the next came at ~3 s, just as the grace ended,
+  // so the bundled view flashed up for a moment.
+  it('recovers inside the grace from a drop longer than one retry', () => {
+    const f = live()
+    f.socket().fail() // drop → immediate reconnect
+    f.socket().fail() // server still down
+    vi.advanceTimersByTime(GRACE_RETRY_MS)
+    f.socket().fail() // still down at 0.5 s
+    vi.advanceTimersByTime(GRACE_RETRY_MS)
+    f.socket().fail() // still down at 1.0 s
+    vi.advanceTimersByTime(GRACE_RETRY_MS)
+    f.socket().batch() // back at 1.5 s
+    expect(f.feed.mode).toBe('ws')
+    vi.advanceTimersByTime(60_000)
+    expect(f.log).not.toContain('startFallback')
+  })
+
+  it('backs off from 1 s once the grace has run out', () => {
     const f = live()
     f.socket().fail()
+    // Every attempt during the grace fails at once.
+    while (f.feed.mode === 'reconnecting') {
+      f.socket().fail()
+      vi.advanceTimersByTime(f.status().nextRetryAt! - Date.now())
+    }
+    expect(f.feed.mode).toBe('fallback')
     f.socket().fail()
-    expect(f.feed.mode).toBe('reconnecting')
     expect(f.status()).toMatchObject({ nextRetryAt: Date.now() + 1_000 })
   })
 
@@ -471,6 +510,7 @@ describe('createSatelliteFeed — losing a live stream', () => {
     expect(f.feed.mode).toBe('ws')
 
     f.socket().fail() // drop → immediate reconnect
+    vi.advanceTimersByTime(DROP_GRACE_MS) // grace runs out with that attempt still open
     f.socket().fail() // which fails → 1 s, not 4 s
     expect(f.status()).toMatchObject({ nextRetryAt: Date.now() + 1_000 })
   })

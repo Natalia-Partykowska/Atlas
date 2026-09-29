@@ -1,6 +1,12 @@
 import { connectOrbitStream } from './orbitStream'
 import type { ConjunctionEvent, OrbitStreamHandle, ViewportBounds } from './orbitStream'
-import { DROP_GRACE_MS, FIRST_BATCH_DEADLINE_MS, retryDelayMs } from './orbitReconnect'
+import {
+  DROP_GRACE_MS,
+  FIRST_BATCH_DEADLINE_MS,
+  GRACE_RETRY_MS,
+  retryDelayMs,
+  withJitter,
+} from './orbitReconnect'
 import type { SatPosition } from './satellites'
 
 // Decides where the globe's satellite positions come from: the live orbit
@@ -20,7 +26,7 @@ import type { SatPosition } from './satellites'
 //   connecting    first connection, nothing on screen yet
 //   ws            live batches from the server
 //   reconnecting  the live stream dropped; its last frame stays on screen for
-//                 a short grace while a reconnect runs
+//                 a 3 s grace while it retries every 0.5 s
 //   fallback      the bundled satellites; retries run in the background
 //
 // Connections are separate from modes: at most one socket exists at a time.
@@ -273,9 +279,8 @@ export function createSatelliteFeed({
     hooks.conjunctions(events)
   }
 
-  const scheduleRetry = () => {
+  const scheduleRetry = (delay: number) => {
     clearRetryTimer()
-    const delay = retryDelayMs(failures - 1, random())
     nextRetryAt = Date.now() + delay
     retryTimer = setTimeout(() => {
       retryTimer = null
@@ -298,9 +303,15 @@ export function createSatelliteFeed({
       retry()
       return
     }
+    if (mode === 'reconnecting') {
+      // Still inside the grace: retry quickly without growing the backoff, so
+      // a drop shorter than the grace never shows the bundled satellites.
+      scheduleRetry(withJitter(GRACE_RETRY_MS, random()))
+      return
+    }
     failures++
     if (mode === 'connecting') enter('fallback')
-    scheduleRetry()
+    scheduleRetry(retryDelayMs(failures - 1, random()))
   }
 
   const openSocket = () => {

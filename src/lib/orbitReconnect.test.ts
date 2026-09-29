@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest'
 import {
+  GRACE_RETRY_MS,
   RETRY_BASE_MS,
   RETRY_JITTER,
   RETRY_MAX_MS,
   retryDelayMs,
+  withJitter,
 } from './orbitReconnect'
 
 // random = 0.5 is the midpoint of [0, 1): no jitter either way.
@@ -63,5 +65,13 @@ describe('retryDelayMs', () => {
     const d = retryDelayMs(0)
     expect(d).toBeGreaterThanOrEqual(RETRY_BASE_MS * 0.8)
     expect(d).toBeLessThan(RETRY_BASE_MS * 1.2)
+  })
+})
+
+describe('withJitter', () => {
+  it('moves a delay by at most ±20 %', () => {
+    expect(withJitter(GRACE_RETRY_MS, 0.5)).toBe(500)
+    expect(withJitter(GRACE_RETRY_MS, 0)).toBe(400)
+    expect(withJitter(GRACE_RETRY_MS, 0.999_999)).toBe(599)
   })
 })
