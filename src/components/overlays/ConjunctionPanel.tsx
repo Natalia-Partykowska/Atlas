@@ -1,36 +1,28 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useAtlasStore } from '@/stores/useAtlasStore'
 import type { ConjunctionEvent } from '@/lib/orbitStream'
+import { MAX_VISIBLE_ROWS, conjunctionPairKey, isSamePair } from '@/lib/conjunctionEvents'
 import { speakConjunction, stopSatelliteVoice } from '@/lib/satelliteVoice'
 import { SpeakerIcon, VoiceFooter } from './VoiceControls'
 
 const DRAWER_WIDTH_PX = 380
 const TRANSITION_MS = 250
 
+/** `T- 00:12:04` before the closest approach, `T+ 00:00:17` after it — a
+ *  row stays up to a minute past it, or for as long as it's selected. */
 function formatCountdown(deltaMs: number): string {
-  if (deltaMs <= 0) return 'T- 00:00:00'
-  const total = Math.floor(deltaMs / 1000)
+  const sign = deltaMs > 0 ? 'T-' : 'T+'
+  const total = Math.floor(Math.abs(deltaMs) / 1000)
   const h = Math.floor(total / 3600)
   const m = Math.floor((total % 3600) / 60)
   const s = total % 60
   const pad = (n: number) => String(n).padStart(2, '0')
-  return `T- ${pad(h)}:${pad(m)}:${pad(s)}`
+  return `${sign} ${pad(h)}:${pad(m)}:${pad(s)}`
 }
 
 /** Row tooltip part: `STARLINK-3087 (#44713)`, or just `#44713` without a name. */
 function pairLabel(name: string | undefined, norad: number): string {
   return name ? `${name} (#${norad})` : `#${norad}`
-}
-
-function isSelected(
-  e: ConjunctionEvent,
-  sel: { noradA: number; noradB: number } | null,
-): boolean {
-  if (!sel) return false
-  return (
-    (e.noradA === sel.noradA && e.noradB === sel.noradB) ||
-    (e.noradA === sel.noradB && e.noradB === sel.noradA)
-  )
 }
 
 export default function ConjunctionPanel() {
@@ -73,6 +65,18 @@ export default function ConjunctionPanel() {
     [events],
   )
 
+  // Merged batches build up to thousands of events, so only the soonest rows
+  // render (the header still counts them all). The selected row stays even
+  // when newer events have pushed it past the cap.
+  const rows = useMemo(() => {
+    const top = sorted.slice(0, MAX_VISIBLE_ROWS)
+    if (selected && !top.some((e) => isSamePair(e, selected))) {
+      const sel = sorted.find((e) => isSamePair(e, selected))
+      if (sel) top.push(sel)
+    }
+    return top
+  }, [sorted, selected])
+
   // Closing the drawer cuts the sentence off. Keyed on the drawer, not on the
   // selection: picking a satellite on the globe clears the selection too, and
   // must not silence that satellite's name.
@@ -81,8 +85,10 @@ export default function ConjunctionPanel() {
   }, [isOpen])
 
   // Called from click handlers only — the voice's AudioContext has to start
-  // inside the user gesture. Silent until the catalog has named both.
+  // inside the user gesture. Silent until the catalog has named both, and for
+  // an approach that has passed ("in under a minute" would be wrong).
   const say = (e: ConjunctionEvent) => {
+    if (e.tcaEpochMs <= Date.now()) return
     const nameA = catalog?.get(e.noradA)?.name
     const nameB = catalog?.get(e.noradB)?.name
     if (!nameA || !nameB) return
@@ -90,7 +96,7 @@ export default function ConjunctionPanel() {
   }
 
   const handleClick = (e: ConjunctionEvent) => {
-    if (isSelected(e, selected)) {
+    if (isSamePair(e, selected)) {
       setSelected(null)
       stopSatelliteVoice('conjunction')
     } else {
@@ -122,7 +128,7 @@ export default function ConjunctionPanel() {
             {/* No count while "Loading…" — it would be a guess, not a result. */}
             {receivedFirstBatch && (
               <span className="text-white/40 text-xs font-normal ml-2">
-                {sorted.length} {sorted.length === 1 ? 'event' : 'events'}
+                {sorted.length.toLocaleString()} {sorted.length === 1 ? 'event' : 'events'}
               </span>
             )}
           </h2>
@@ -157,15 +163,16 @@ export default function ConjunctionPanel() {
             </p>
           ) : (
             <ul className="divide-y divide-white/5">
-              {sorted.map((e) => {
-                const isSel = isSelected(e, selected)
+              {rows.map((e) => {
+                const isSel = isSamePair(e, selected)
                 const dt = e.tcaEpochMs - now
                 // Names come from the /catalog fetch; until it lands (or for
                 // an object it doesn't know) the NORAD number stands in.
                 const nameA = catalog?.get(e.noradA)?.name
                 const nameB = catalog?.get(e.noradB)?.name
                 return (
-                  <li key={`${e.noradA}-${e.noradB}-${e.tcaEpochMs}`} className="relative">
+                  // One row per pair — the key survives a re-estimated TCA.
+                  <li key={conjunctionPairKey(e.noradA, e.noradB)} className="relative">
                     <button
                       onClick={() => handleClick(e)}
                       title={`${pairLabel(nameA, e.noradA)} ↔ ${pairLabel(nameB, e.noradB)}`}
@@ -195,16 +202,21 @@ export default function ConjunctionPanel() {
                       <div
                         className={[
                           'text-xs mt-1 font-mono tabular-nums',
-                          dt < 5 * 60 * 1000 ? 'text-red-300' : 'text-white/45',
+                          dt <= 0
+                            ? 'text-white/30'
+                            : dt < 5 * 60 * 1000
+                              ? 'text-red-300'
+                              : 'text-white/45',
                         ].join(' ')}
                       >
                         {formatCountdown(dt)}
                       </div>
                     </button>
-                    {isSel && nameA && nameB && (
+                    {isSel && nameA && nameB && dt > 0 && (
                       // A sibling of the row button (buttons can't nest), level
                       // with the countdown. Replays even when "Read aloud" is
-                      // off — it's an explicit ask.
+                      // off — it's an explicit ask. Gone once the approach has
+                      // passed.
                       <button
                         onClick={() => say(e)}
                         aria-label="Read this conjunction aloud"
@@ -218,6 +230,11 @@ export default function ConjunctionPanel() {
                 )
               })}
             </ul>
+          )}
+          {receivedFirstBatch && sorted.length > MAX_VISIBLE_ROWS && (
+            <p className="text-white/35 text-[11px] px-4 py-3 border-t border-white/5">
+              Showing the {MAX_VISIBLE_ROWS} soonest of {sorted.length.toLocaleString()}
+            </p>
           )}
       </div>
 

@@ -152,8 +152,8 @@ export default function Map() {
   const conjunctionsVisible = useAtlasStore((s) => s.conjunctionsVisible)
   const conjunctionEvents = useAtlasStore((s) => s.conjunctionEvents)
   const selectedConjunction = useAtlasStore((s) => s.selectedConjunction)
-  const setConjunctionEvents = useAtlasStore((s) => s.setConjunctionEvents)
-  const setSelectedConjunction = useAtlasStore((s) => s.setSelectedConjunction)
+  const mergeConjunctionBatch = useAtlasStore((s) => s.mergeConjunctionBatch)
+  const clearConjunctionEvents = useAtlasStore((s) => s.clearConjunctionEvents)
   const setSatelliteCatalog = useAtlasStore((s) => s.setSatelliteCatalog)
   const setSatelliteHover = useAtlasStore((s) => s.setSatelliteHover)
   const setSatelliteCount = useAtlasStore((s) => s.setSatelliteCount)
@@ -1496,8 +1496,7 @@ export default function Map() {
           // Server is gone (or we're tearing down). No conjunction screening
           // without the server, so flush stale events instead of leaving a
           // ghost panel up. Toggle stays on so the user's intent is preserved.
-          setConjunctionEvents([])
-          setSelectedConjunction(null)
+          clearConjunctionEvents()
           setSatelliteCount(0)
           latestPositionsByNoradRef.current.clear()
           conjLineLayerRef.current?.setData(null, latestPositionsByNoradRef.current)
@@ -1520,8 +1519,7 @@ export default function Map() {
         case 'fallback':
           // Local fallback has no conjunction screener — drop any stale
           // events so the panel reflects "no live data" honestly.
-          setConjunctionEvents([])
-          setSelectedConjunction(null)
+          clearConjunctionEvents()
           conjLineLayerRef.current?.setData(null, latestPositionsByNoradRef.current)
           conjMidpointLayerRef.current?.setData(null)
           conjEndpointLayerRef.current?.setData(null, latestPositionsByNoradRef.current)
@@ -1552,7 +1550,7 @@ export default function Map() {
           // there's no live position data to anchor the 3D lines, and we'd
           // mislead the user about which events are still in window.
           if (mode === 'idle' || mode === 'fallback') return
-          setConjunctionEvents(events)
+          mergeConjunctionBatch(events)
         },
         onConnect: () => {
           orbit?.updateViewport(currentViewport())
@@ -1600,7 +1598,7 @@ export default function Map() {
         orbit = null
       }
     }
-  }, [satellitesVisible, globeMode, isMapLoaded, setConjunctionEvents, setSelectedConjunction, setSatelliteCount])
+  }, [satellitesVisible, globeMode, isMapLoaded, mergeConjunctionBatch, clearConjunctionEvents, setSatelliteCount])
 
   // ─── Conjunction overlay (selection-only) ─────────────────────────────────
   //

@@ -86,7 +86,8 @@ export interface AtlasState {
   setSatellitesVisible: (on: boolean) => void
   setSatelliteCount: (n: number) => void
   setConjunctionsVisible: (on: boolean) => void
-  setConjunctionEvents: (events: ConjunctionEvent[]) => void
+  mergeConjunctionBatch: (events: ConjunctionEvent[]) => void
+  clearConjunctionEvents: () => void
   setSelectedConjunction: (sel: { noradA: number; noradB: number } | null) => void
   setSatelliteCatalog: (catalog: Map<number, SatelliteCatalogEntry> | null) => void
   setSatelliteHover: (hover: SatelliteHoverState) => void
