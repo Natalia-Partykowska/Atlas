@@ -133,6 +133,54 @@ describe('ConjunctionPanel selection', () => {
   })
 })
 
+// ── Long lists and passed approaches ──────────────────────────────────────────
+
+describe('ConjunctionPanel long lists', () => {
+  // 105 pairs, one minute apart — more than the drawer renders.
+  const many = () =>
+    Array.from({ length: 105 }, (_, i) =>
+      conjunction({ noradA: 1000 + i, tcaEpochMs: Date.now() + (i + 1) * 60_000 }),
+    )
+  const rows = () => screen.getAllByRole('button', { name: /↔/ })
+
+  it('renders the 100 soonest rows and counts them all', () => {
+    useAtlasStore.setState({ conjunctionEvents: many() })
+    render(<ConjunctionPanel />)
+    expect(rows()).toHaveLength(100)
+    expect(screen.getByText('105 events')).toBeInTheDocument()
+    expect(screen.getByText('Showing the 100 soonest of 105')).toBeInTheDocument()
+  })
+
+  it('keeps the selected row when it is past the cap', () => {
+    useAtlasStore.setState({
+      conjunctionEvents: many(),
+      selectedConjunction: { noradA: 1104, noradB: FENGYUN },
+    })
+    render(<ConjunctionPanel />)
+    expect(rows()).toHaveLength(101)
+    expect(screen.getByText('#1104')).toBeInTheDocument()
+  })
+})
+
+describe('ConjunctionPanel passed approaches', () => {
+  beforeEach(() => {
+    useAtlasStore.setState({ conjunctionEvents: [conjunction({ tcaEpochMs: Date.now() - 20_000 })] })
+  })
+
+  it('counts up once the closest approach has passed', () => {
+    render(<ConjunctionPanel />)
+    expect(screen.getByText(/^T\+ 00:00:2\d$/)).toBeInTheDocument()
+  })
+
+  it("doesn't read a passed approach aloud or offer replay", () => {
+    render(<ConjunctionPanel />)
+    fireEvent.click(row())
+    expect(useAtlasStore.getState().selectedConjunction).not.toBeNull()
+    expect(speakConjunction).not.toHaveBeenCalled()
+    expect(replay()).not.toBeInTheDocument()
+  })
+})
+
 // ── Voice ─────────────────────────────────────────────────────────────────────
 
 describe('ConjunctionPanel voice', () => {
