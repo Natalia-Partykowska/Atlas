@@ -374,12 +374,13 @@ describe('conjunction batches', () => {
       conjunctionsVisible: false,
       conjunctionEvents: [],
       selectedConjunction: null,
+      selectedSatellite: null,
       conjunctionsReceivedFirstBatch: false,
     })
   })
 
   it('ignores batches while the drawer is closed', () => {
-    real().setConjunctionEvents([CONJUNCTION])
+    real().mergeConjunctionBatch([CONJUNCTION])
     expect(real().conjunctionEvents).toEqual([])
     expect(real().conjunctionsReceivedFirstBatch).toBe(false)
   })
@@ -396,8 +397,53 @@ describe('conjunction batches', () => {
 
   it('takes batches while the drawer is open', () => {
     real().setConjunctionsVisible(true)
-    real().setConjunctionEvents([CONJUNCTION])
+    real().mergeConjunctionBatch([CONJUNCTION])
     expect(real().conjunctionEvents).toEqual([CONJUNCTION])
     expect(real().conjunctionsReceivedFirstBatch).toBe(true)
+  })
+
+  it('keeps the selected pair when a batch leaves it out', () => {
+    real().setConjunctionsVisible(true)
+    real().mergeConjunctionBatch([CONJUNCTION])
+    real().setSelectedConjunction({ noradA: CONJUNCTION.noradA, noradB: CONJUNCTION.noradB })
+    const other = { ...CONJUNCTION, noradA: 25544 }
+    real().mergeConjunctionBatch([other])
+    expect(real().selectedConjunction).not.toBeNull()
+    expect(real().conjunctionEvents).toEqual([CONJUNCTION, other])
+  })
+
+  it('clears the list and the selection when the server is gone', () => {
+    useAtlasStore.setState({
+      conjunctionsVisible: true,
+      conjunctionEvents: [CONJUNCTION],
+      selectedConjunction: { noradA: CONJUNCTION.noradA, noradB: CONJUNCTION.noradB },
+    })
+    real().clearConjunctionEvents()
+    expect(real().conjunctionEvents).toEqual([])
+    expect(real().selectedConjunction).toBeNull()
+    expect(real().conjunctionsReceivedFirstBatch).toBe(true)
+  })
+
+  it('drops a passed row when it is deselected', () => {
+    const passed = { ...CONJUNCTION, tcaEpochMs: Date.now() - 10 * 60_000 }
+    useAtlasStore.setState({
+      conjunctionsVisible: true,
+      conjunctionEvents: [passed, CONJUNCTION],
+      selectedConjunction: { noradA: passed.noradA, noradB: passed.noradB },
+    })
+    real().setSelectedConjunction(null)
+    expect(real().conjunctionEvents).toEqual([CONJUNCTION])
+  })
+
+  it('drops a passed row when picking a satellite lets go of it', () => {
+    const passed = { ...CONJUNCTION, tcaEpochMs: Date.now() - 10 * 60_000 }
+    useAtlasStore.setState({
+      conjunctionsVisible: true,
+      conjunctionEvents: [passed],
+      selectedConjunction: { noradA: passed.noradA, noradB: passed.noradB },
+    })
+    real().setSelectedSatellite({ norad: 25544 })
+    expect(real().selectedConjunction).toBeNull()
+    expect(real().conjunctionEvents).toEqual([])
   })
 })

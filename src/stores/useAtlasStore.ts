@@ -7,6 +7,7 @@ import type {
   SatelliteHoverState,
 } from '@/types/atlas'
 import type { ConjunctionEvent } from '@/lib/orbitStream'
+import { mergeConjunctionEvents, pruneConjunctionEvents } from '@/lib/conjunctionEvents'
 import type { SatelliteCatalogEntry } from '@/lib/satelliteCatalog'
 import { readVoiceEnabled, writeVoiceEnabled } from '@/lib/satelliteVoice'
 
@@ -98,48 +99,61 @@ export const useAtlasStore = create<AtlasState>((set, get) => ({
             conjunctionsReceivedFirstBatch: false,
           },
     ),
-  // Replacing the events list also drops the selection if the chosen pair is
-  // gone, and flips `receivedFirstBatch` true so the panel can switch from
-  // "Loading…" to either the row list or "No close approaches".
+  // Each 10 s batch is merged into the list rather than replacing it (see
+  // `conjunctionEvents.ts`): rows stay until their closest approach has passed
+  // and the selected pair stays until deselected. Also flips
+  // `receivedFirstBatch` true so the panel can switch from "Loading…" to
+  // either the row list or "No close approaches".
   // Batches keep streaming while the drawer is closed; they're ignored, so
   // opening it never shows an old batch's count before a fresh one lands.
-  setConjunctionEvents: (events: ConjunctionEvent[]) => {
-    if (!get().conjunctionsVisible) return
-    const sel = get().selectedConjunction
-    if (
-      sel &&
-      !events.some(
-        (e) =>
-          (e.noradA === sel.noradA && e.noradB === sel.noradB) ||
-          (e.noradA === sel.noradB && e.noradB === sel.noradA),
-      )
-    ) {
-      set({
-        conjunctionEvents: events,
-        selectedConjunction: null,
-        conjunctionsReceivedFirstBatch: true,
-      })
-    } else {
-      set({ conjunctionEvents: events, conjunctionsReceivedFirstBatch: true })
-    }
+  mergeConjunctionBatch: (events: ConjunctionEvent[]) => {
+    const { conjunctionsVisible, conjunctionEvents, selectedConjunction } = get()
+    if (!conjunctionsVisible) return
+    set({
+      conjunctionEvents: mergeConjunctionEvents(
+        conjunctionEvents,
+        events,
+        Date.now(),
+        selectedConjunction,
+      ),
+      conjunctionsReceivedFirstBatch: true,
+    })
   },
+  // The server is gone (or we fell back to local positions): no screening, so
+  // empty the list and drop the selection. An empty batch can't do this any
+  // more — merging keeps what's there. Also ends any "Loading…": with no
+  // server there's nothing to wait for.
+  clearConjunctionEvents: () =>
+    set({
+      conjunctionEvents: [],
+      selectedConjunction: null,
+      conjunctionsReceivedFirstBatch: true,
+    }),
   // Selecting a conjunction clears any in-flight satellite selection (mutually
-  // exclusive — one drawer at a time, one camera target at a time).
+  // exclusive — one drawer at a time, one camera target at a time). Letting go
+  // drops a row that stayed past its closest approach only while selected.
   setSelectedConjunction: (selectedConjunction) =>
     set(
       selectedConjunction
         ? { selectedConjunction, selectedSatellite: null }
-        : { selectedConjunction: null },
+        : {
+            selectedConjunction: null,
+            conjunctionEvents: pruneConjunctionEvents(get().conjunctionEvents, Date.now(), null),
+          },
     ),
   setSatelliteCatalog: (satelliteCatalog: Map<number, SatelliteCatalogEntry> | null) =>
     set({ satelliteCatalog }),
   setSatelliteHover: (satelliteHover: SatelliteHoverState) => set({ satelliteHover }),
   // Selecting a satellite clears any in-flight conjunction selection (mutually
-  // exclusive — see setSelectedConjunction).
+  // exclusive — see setSelectedConjunction), which lets go of its row too.
   setSelectedSatellite: (selectedSatellite) =>
     set(
       selectedSatellite
-        ? { selectedSatellite, selectedConjunction: null }
+        ? {
+            selectedSatellite,
+            selectedConjunction: null,
+            conjunctionEvents: pruneConjunctionEvents(get().conjunctionEvents, Date.now(), null),
+          }
         : { selectedSatellite: null },
     ),
   setSatelliteVoiceEnabled: (on: boolean) => {

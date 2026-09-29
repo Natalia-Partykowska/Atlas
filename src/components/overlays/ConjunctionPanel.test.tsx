@@ -112,7 +112,7 @@ describe('ConjunctionPanel header count', () => {
     act(() => {
       useAtlasStore
         .getState()
-        .setConjunctionEvents([conjunction(), conjunction({ noradA: 25544 })])
+        .mergeConjunctionBatch([conjunction(), conjunction({ noradA: 25544 })])
     })
     expect(count()).toHaveTextContent('2 events')
   })
