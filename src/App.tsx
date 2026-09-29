@@ -7,6 +7,7 @@ import ConjunctionPanel from '@/components/overlays/ConjunctionPanel'
 import SatelliteInfoPanel from '@/components/overlays/SatelliteInfoPanel'
 import BrandStrip from '@/components/overlays/BrandStrip'
 import ModeBanner from '@/components/overlays/ModeBanner'
+import SatelliteFeedNotice from '@/components/overlays/SatelliteFeedNotice'
 
 export default function App() {
   return (
@@ -14,6 +15,7 @@ export default function App() {
       <Map />
       <BrandStrip />
       <ModeBanner />
+      <SatelliteFeedNotice />
       <LayerSwitcher />
       <Legend />
       <Tooltip />

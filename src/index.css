@@ -51,3 +51,15 @@
 .maplibregl-ctrl-group button span {
   filter: invert(1);
 }
+
+/* SatelliteFeedNotice entrance (used via motion-safe:animate-[feed-notice-in_…]) */
+@keyframes feed-notice-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}

@@ -406,29 +406,22 @@ describe('connectOrbitStream', () => {
     expect(onDisconnect).toHaveBeenCalledOnce()
   })
 
+  // A failed socket fires `error` and then `close`. That's one failure, and a
+  // retry counter downstream must see it once.
+  it('calls onDisconnect once when the socket errors and then closes', () => {
+    const onDisconnect = vi.fn()
+    connectOrbitStream('wss://test', { onPositions: vi.fn(), onDisconnect })
+    mockWs.simulateError()
+    mockWs.simulateClose()
+    expect(onDisconnect).toHaveBeenCalledOnce()
+  })
+
   it('does NOT call onDisconnect after caller-initiated close()', () => {
     const onDisconnect = vi.fn()
     const handle = connectOrbitStream('wss://test', { onPositions: vi.fn(), onDisconnect })
     handle.close()
     mockWs.simulateClose()
     expect(onDisconnect).not.toHaveBeenCalled()
-  })
-
-  it('isLive() is true while connecting', () => {
-    const handle = connectOrbitStream('wss://test', { onPositions: vi.fn() })
-    expect(handle.isLive()).toBe(true)
-  })
-
-  it('isLive() is true when open', () => {
-    const handle = connectOrbitStream('wss://test', { onPositions: vi.fn() })
-    mockWs.simulateOpen()
-    expect(handle.isLive()).toBe(true)
-  })
-
-  it('isLive() is false after close()', () => {
-    const handle = connectOrbitStream('wss://test', { onPositions: vi.fn() })
-    handle.close()
-    expect(handle.isLive()).toBe(false)
   })
 
   it('routes 0x01 frames to onPositions', () => {

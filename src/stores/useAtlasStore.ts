@@ -10,6 +10,7 @@ import type { ConjunctionEvent } from '@/lib/orbitStream'
 import { mergeConjunctionEvents, pruneConjunctionEvents } from '@/lib/conjunctionEvents'
 import type { SatelliteCatalogEntry } from '@/lib/satelliteCatalog'
 import { readVoiceEnabled, writeVoiceEnabled } from '@/lib/satelliteVoice'
+import { SATELLITE_FEED_OFF } from '@/lib/satelliteFeed'
 
 const EMPTY_SATELLITE_HOVER: SatelliteHoverState = {
   visible: false,
@@ -31,6 +32,8 @@ export const useAtlasStore = create<AtlasState>((set, get) => ({
   submarineCablesVisible: false,
   satellitesVisible: false,
   satelliteCount: 0,
+  satelliteFeed: SATELLITE_FEED_OFF,
+  satelliteRetryRequest: 0,
   conjunctionsVisible: false,
   conjunctionEvents: [],
   selectedConjunction: null,
@@ -68,6 +71,7 @@ export const useAtlasStore = create<AtlasState>((set, get) => ({
         : {
             satellitesVisible: false,
             satelliteCount: 0,
+            satelliteFeed: SATELLITE_FEED_OFF,
             conjunctionsVisible: false,
             conjunctionEvents: [],
             selectedConjunction: null,
@@ -78,6 +82,9 @@ export const useAtlasStore = create<AtlasState>((set, get) => ({
           },
     ),
   setSatelliteCount: (satelliteCount: number) => set({ satelliteCount }),
+  setSatelliteFeed: (satelliteFeed) => set({ satelliteFeed }),
+  requestSatelliteRetry: () =>
+    set((s) => ({ satelliteRetryRequest: s.satelliteRetryRequest + 1 })),
   // Enabling conjunctions force-enables globe + satellites; disabling clears state.
   // Either transition empties the list and resets the "received first batch"
   // flag, so the drawer shows a fresh "Loading…" (and no count) until the next
@@ -121,13 +128,13 @@ export const useAtlasStore = create<AtlasState>((set, get) => ({
   },
   // The server is gone (or we fell back to local positions): no screening, so
   // empty the list and drop the selection. An empty batch can't do this any
-  // more — merging keeps what's there. Also ends any "Loading…": with no
-  // server there's nothing to wait for.
+  // more — merging keeps what's there. The drawer says why from the feed
+  // status, and once the feed is back it waits for a fresh batch.
   clearConjunctionEvents: () =>
     set({
       conjunctionEvents: [],
       selectedConjunction: null,
-      conjunctionsReceivedFirstBatch: true,
+      conjunctionsReceivedFirstBatch: false,
     }),
   // Selecting a conjunction clears any in-flight satellite selection (mutually
   // exclusive — one drawer at a time, one camera target at a time). Letting go

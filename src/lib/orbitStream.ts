@@ -24,7 +24,6 @@ export interface ConjunctionEvent {
 
 export interface OrbitStreamHandle {
   updateViewport: (bounds: ViewportBounds) => void
-  isLive: () => boolean
   close: () => void
 }
 
@@ -207,8 +206,11 @@ export function connectOrbitStream(
     }
   })
 
+  // A failed socket fires `error` and then `close`; report that failure once.
+  let ended = false
   const handleEnd = () => {
-    if (closedByCaller) return
+    if (closedByCaller || ended) return
+    ended = true
     cbs.onDisconnect?.()
   }
   ws.addEventListener('close', handleEnd)
@@ -216,10 +218,6 @@ export function connectOrbitStream(
 
   return {
     updateViewport: sendViewport,
-    isLive: () =>
-      ws !== null &&
-      (ws.readyState === WebSocket.OPEN ||
-        ws.readyState === WebSocket.CONNECTING),
     close: () => {
       closedByCaller = true
       if (ws) {
