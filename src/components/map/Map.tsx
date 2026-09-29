@@ -35,8 +35,8 @@ import { SatelliteLayer } from '@/lib/satelliteLayer'
 import { ConjunctionLineLayer } from '@/lib/conjunctionLineLayer'
 import { ConjunctionMidpointLayer } from '@/lib/conjunctionMidpointLayer'
 import { ConjunctionEndpointLayer } from '@/lib/conjunctionEndpointLayer'
-import { connectOrbitStream } from '@/lib/orbitStream'
-import type { OrbitStreamHandle, ViewportBounds } from '@/lib/orbitStream'
+import type { ViewportBounds } from '@/lib/orbitStream'
+import { createSatelliteFeed } from '@/lib/satelliteFeed'
 import { fetchSatelliteCatalog } from '@/lib/satelliteCatalog'
 import { preloadSatelliteVoice, speakSatellite } from '@/lib/satelliteVoice'
 import { fetchSatelliteTLE } from '@/lib/satelliteTLE'
@@ -1305,18 +1305,11 @@ export default function Map() {
       return
     }
 
-    // Single source of truth for who is allowed to write to `satLayer`.
-    // Mode transitions go through `enter()`, which always tears down the
-    // current writers before arming the new ones — so two writers can never
-    // race on the same source.
-    type SatMode = 'idle' | 'connecting' | 'ws' | 'fallback'
-
+    // Where positions come from (live server or bundled satellites), and which
+    // writer may touch `satLayer`, is decided by the feed controller in
+    // `src/lib/satelliteFeed.ts`. This effect supplies the drawing hooks.
     const wsUrl = import.meta.env.VITE_ORBIT_WS_URL as string | undefined
 
-    let mode: SatMode = 'idle'
-    let orbit: OrbitStreamHandle | null = null
-    let fallbackTimer: number | null = null
-    let fallbackAbort: AbortController | null = null
     let moveendHandler: (() => void) | null = null
     let moveThrottle: number | null = null
 
@@ -1337,24 +1330,10 @@ export default function Map() {
       }
     }
 
-    const clearFallbackTimer = () => {
-      if (fallbackTimer !== null) {
-        clearTimeout(fallbackTimer)
-        fallbackTimer = null
-      }
-    }
-
     const stopLocal = () => {
       if (satelliteIntervalRef.current !== null) {
         clearInterval(satelliteIntervalRef.current)
         satelliteIntervalRef.current = null
-      }
-    }
-
-    const abortFallbackFetch = () => {
-      if (fallbackAbort) {
-        fallbackAbort.abort()
-        fallbackAbort = null
       }
     }
 
@@ -1435,103 +1414,9 @@ export default function Map() {
       layer.setData(pos ?? null)
     }
 
-    // Local SGP4 propagation — only writer for `fallback` mode.
-    const startLocal = () => {
-      const sats = satelliteTLERef.current
-      if (!sats || sats.length === 0) return
-      const paint = () => {
-        if (mode !== 'fallback') return
-        const positions = propagateAll(sats, new Date())
-        refreshLatestPositions(positions)
-        const packed = packSatellitePositions(positions)
-        satLayer.setData(packed.posBuffer, packed.metaBuffer, packed.count)
-        setSatelliteCount(packed.count)
-        refreshLivePairOverlay()
-        refreshSelectedSatelliteOverlay()
-        refreshSelectedSatelliteOrbit()
-        refreshHoveredSatelliteOverlay()
-      }
-      paint()
-      satelliteIntervalRef.current = window.setInterval(paint, 200)
-    }
-
-    const startLocalFlow = () => {
-      if (mode !== 'fallback') return
-      if (satelliteIntervalRef.current !== null) return
-      if (satelliteTLERef.current) {
-        startLocal()
-        return
-      }
-      fallbackAbort = new AbortController()
-      fetch('/data/satellites.json', { signal: fallbackAbort.signal })
-        .then((r) => r.json())
-        .then((data: SatTLEEntry[]) => {
-          if (mode !== 'fallback') return
-          satelliteTLERef.current = parseTLEData(data)
-          startLocal()
-        })
-        .catch((err) => {
-          if ((err as Error).name === 'AbortError') return
-          console.error('Satellite data fetch failed:', err)
-        })
-    }
-
-    // Single funnel for all mode transitions. Tear down before arming.
-    const enter = (next: SatMode) => {
-      if (mode === next) return
-
-      // Exit: kill every writer/timer the previous mode could have armed.
-      // Idempotent calls — safe regardless of which mode we were in.
-      clearFallbackTimer()
-      abortFallbackFetch()
-      stopLocal()
-
-      mode = next
-
-      // Flush any stale paint so the new writer's first frame is clean.
-      satLayer.clear()
-
-      switch (next) {
-        case 'idle':
-          // Server is gone (or we're tearing down). No conjunction screening
-          // without the server, so flush stale events instead of leaving a
-          // ghost panel up. Toggle stays on so the user's intent is preserved.
-          clearConjunctionEvents()
-          setSatelliteCount(0)
-          latestPositionsByNoradRef.current.clear()
-          conjLineLayerRef.current?.setData(null, latestPositionsByNoradRef.current)
-          conjMidpointLayerRef.current?.setData(null)
-          conjEndpointLayerRef.current?.setData(null, latestPositionsByNoradRef.current)
-          break
-        case 'connecting':
-          // 8s budget for the WS handshake + first batch. Railway cold-starts
-          // can take several seconds; if WS is still in CONNECTING/OPEN we
-          // hold off, otherwise fall back.
-          fallbackTimer = window.setTimeout(() => {
-            if (mode !== 'connecting') return
-            if (orbit?.isLive()) return
-            enter('fallback')
-          }, 8000)
-          break
-        case 'ws':
-          // First batch will paint immediately after this returns.
-          break
-        case 'fallback':
-          // Local fallback has no conjunction screener — drop any stale
-          // events so the panel reflects "no live data" honestly.
-          clearConjunctionEvents()
-          conjLineLayerRef.current?.setData(null, latestPositionsByNoradRef.current)
-          conjMidpointLayerRef.current?.setData(null)
-          conjEndpointLayerRef.current?.setData(null, latestPositionsByNoradRef.current)
-          startLocalFlow()
-          break
-      }
-    }
-
-    const renderWSPositions = (positions: SatPosition[]) => {
-      // Drop any stragglers that arrive after we've left the WS-eligible states.
-      if (mode === 'idle' || mode === 'fallback') return
-      if (mode !== 'ws') enter('ws')
+    // One frame of positions (a live batch or a local tick), plus every
+    // overlay that follows a satellite's live position.
+    const paintPositions = (positions: SatPosition[]) => {
       refreshLatestPositions(positions)
       const packed = packSatellitePositions(positions)
       satLayer.setData(packed.posBuffer, packed.metaBuffer, packed.count)
@@ -1542,60 +1427,86 @@ export default function Map() {
       refreshHoveredSatelliteOverlay()
     }
 
-    if (wsUrl) {
-      orbit = connectOrbitStream(wsUrl, {
-        onPositions: renderWSPositions,
-        onConjunctions: (events) => {
-          // Drop conjunction batches that arrive while we're in fallback —
-          // there's no live position data to anchor the 3D lines, and we'd
-          // mislead the user about which events are still in window.
-          if (mode === 'idle' || mode === 'fallback') return
-          mergeConjunctionBatch(events)
-        },
-        onConnect: () => {
-          orbit?.updateViewport(currentViewport())
-        },
-        onDisconnect: () => {
-          if (mode === 'idle') return
-          // 3s grace before falling back so brief blips don't flap us.
-          // Replaces any pending 8s/3s timer.
-          clearFallbackTimer()
-          fallbackTimer = window.setTimeout(() => {
-            if (mode === 'idle') return
-            enter('fallback')
-          }, 3000)
-        },
-      })
+    // Local SGP4 propagation — the only writer while the feed is in
+    // `fallback`. The feed aborts `signal` when it leaves `fallback`, which
+    // stops the loop and cancels a pending fetch, so a late tick or a late
+    // fetch can't paint over the live stream.
+    const startLocal = (sats: ParsedSatellite[], signal: AbortSignal) => {
+      if (sats.length === 0) return
+      const paint = () => {
+        if (signal.aborted) return
+        paintPositions(propagateAll(sats, new Date()))
+      }
+      paint()
+      satelliteIntervalRef.current = window.setInterval(paint, 200)
+    }
 
-      // Sync viewport on pan/zoom (throttled to ~5 Hz). Only meaningful in `ws`.
+    const startFallback = (signal: AbortSignal) => {
+      signal.addEventListener('abort', stopLocal, { once: true })
+      if (satelliteIntervalRef.current !== null) return
+      if (satelliteTLERef.current) {
+        startLocal(satelliteTLERef.current, signal)
+        return
+      }
+      fetch('/data/satellites.json', { signal })
+        .then((r) => r.json())
+        .then((data: SatTLEEntry[]) => {
+          if (signal.aborted) return
+          satelliteTLERef.current = parseTLEData(data)
+          startLocal(satelliteTLERef.current, signal)
+        })
+        .catch((err) => {
+          if ((err as Error).name === 'AbortError') return
+          console.error('Satellite data fetch failed:', err)
+        })
+    }
+
+    const feed = createSatelliteFeed({
+      url: wsUrl,
+      viewport: currentViewport,
+      hooks: {
+        paintLive: paintPositions,
+        startFallback,
+        clear: () => satLayer.clear(),
+        // No conjunction screening without the server: flush stale events
+        // and the pair overlays instead of leaving a ghost panel up.
+        screeningLost: () => {
+          clearConjunctionEvents()
+          conjLineLayerRef.current?.setData(null, latestPositionsByNoradRef.current)
+          conjMidpointLayerRef.current?.setData(null)
+          conjEndpointLayerRef.current?.setData(null, latestPositionsByNoradRef.current)
+        },
+        conjunctions: mergeConjunctionBatch,
+      },
+    })
+
+    if (wsUrl) {
+      // Sync viewport on pan/zoom (throttled to ~5 Hz). Only meaningful live.
       moveendHandler = () => {
-        if (mode !== 'ws' || !orbit) return
+        if (feed.mode !== 'ws') return
         if (moveThrottle !== null) return
         moveThrottle = window.setTimeout(() => {
           moveThrottle = null
-          orbit?.updateViewport(currentViewport())
+          feed.syncViewport()
         }, 200)
       }
       map.on('moveend', moveendHandler)
-
-      enter('connecting')
-    } else {
-      // No WS URL configured — go straight to local propagation.
-      enter('fallback')
     }
 
+    feed.start()
+
     return () => {
-      enter('idle')
+      feed.stop()
+      // The toggle stays on (the user's intent is preserved), but nothing from
+      // this run stays on screen or in the lookup the pickers use.
+      setSatelliteCount(0)
+      latestPositionsByNoradRef.current.clear()
       if (moveThrottle !== null) {
         clearTimeout(moveThrottle)
         moveThrottle = null
       }
       if (moveendHandler) {
         map.off('moveend', moveendHandler)
-      }
-      if (orbit) {
-        orbit.close()
-        orbit = null
       }
     }
   }, [satellitesVisible, globeMode, isMapLoaded, mergeConjunctionBatch, clearConjunctionEvents, setSatelliteCount])
