@@ -88,7 +88,12 @@ pub fn build_http_client() -> Result<reqwest::Client> {
     reqwest::Client::builder()
         .user_agent(USER_AGENT)
         .gzip(true)
-        .timeout(std::time::Duration::from_secs(30))
+        // CelesTrak can take 12–25 s before the first byte (measured 2026-10-05)
+        // and `active` (~2.7 MB, uncompressed) took 31 s end to end, so the old
+        // 30 s total silently dropped it from the catalog. The limit covers the
+        // whole response, body included.
+        .connect_timeout(std::time::Duration::from_secs(15))
+        .timeout(std::time::Duration::from_secs(120))
         .build()
         .context("build reqwest client")
 }
