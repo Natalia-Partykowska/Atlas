@@ -42,6 +42,8 @@ import { fetchSatelliteCatalog } from '@/lib/satelliteCatalog'
 import { preloadSatelliteVoice, speakSatellite } from '@/lib/satelliteVoice'
 import { fetchSatelliteTLE } from '@/lib/satelliteTLE'
 import { pickNearestSatellite } from '@/lib/satellitePicking'
+import { createSatelliteHoverTracker } from '@/lib/satelliteHoverTracker'
+import type { SatelliteHoverTracker } from '@/lib/satelliteHoverTracker'
 import { SatelliteSelectionLayer } from '@/lib/satelliteSelectionLayer'
 import { SatelliteHoverLayer } from '@/lib/satelliteHoverLayer'
 import { SatelliteOrbitLayer } from '@/lib/satelliteOrbitLayer'
@@ -105,9 +107,10 @@ export default function Map() {
   // / mouseleave / click) that need to gate on it without re-binding on each
   // toggle.
   const satellitesVisibleRef = useRef<boolean>(false)
-  // Coalesces satellite picking work onto an animation frame — without this,
-  // 17k position projections per mousemove burns the main thread.
-  const satPickingRafRef = useRef<number | null>(null)
+  // Satellite hover: picks once per frame on pointer moves and re-picks when
+  // the scene moves under a still pointer (`src/lib/satelliteHoverTracker.ts`).
+  // Created in the load handler; the satellites effect reports position batches.
+  const satHoverTrackerRef = useRef<SatelliteHoverTracker | null>(null)
 
   // Submarine cables cache
   const cablesGeoJSONRef = useRef<object | null>(null)
@@ -768,51 +771,47 @@ export default function Map() {
       }
 
       // ── Satellite hover (globe + satellites mode only) ───────────────────
-      map.on('mousemove', (e: maplibregl.MapMouseEvent) => {
-        if (!satellitesVisibleRef.current || !globeModeRef.current) return
-        if (satPickingRafRef.current !== null) return
-        const px = e.point.x
-        const py = e.point.y
-        satPickingRafRef.current = requestAnimationFrame(() => {
-          satPickingRafRef.current = null
-          const positions = latestPositionsByNoradRef.current
+      // Pointer moves are picked on the next frame. With the pointer still,
+      // camera moves (here) and position batches (the satellites effect)
+      // re-pick, so the hover stays on the dot actually under the pointer.
+      const hoverTracker = createSatelliteHoverTracker({
+        pick: pickSatelliteAt,
+        onChange: (hover) => {
           const canvas = map.getCanvas()
-          if (positions.size === 0) {
+          if (!hover) {
             canvas.style.cursor = ''
-            return
-          }
-          const hit = pickSatelliteAt({ x: px, y: py })
-          if (hit) {
-            canvas.style.cursor = 'pointer'
-            const cat = useAtlasStore.getState().satelliteCatalog
-            const catName = cat?.get(hit.norad)?.name
-            const fallback =
-              hit.name && hit.name !== String(hit.norad)
-                ? hit.name
-                : `NORAD #${hit.norad}`
-            setSatelliteHover({
-              visible: true,
-              x: px,
-              y: py,
-              norad: hit.norad,
-              name: catName ?? fallback,
-            })
-            // Paint the white hover ring in the same frame; the per-batch
-            // refresh keeps it tracking the sat's motion afterwards.
-            const sel = selectedSatelliteRef.current
-            satHoverLayerRef.current?.setData(
-              sel && sel.norad === hit.norad ? null : hit,
-            )
-          } else {
-            canvas.style.cursor = ''
-            const cur = useAtlasStore.getState().satelliteHover
-            if (cur.visible) {
+            if (useAtlasStore.getState().satelliteHover.visible) {
               setSatelliteHover({ visible: false, x: 0, y: 0, norad: 0, name: '' })
             }
             satHoverLayerRef.current?.setData(null)
+            return
           }
-        })
+          const { sat, point } = hover
+          canvas.style.cursor = 'pointer'
+          const catName = useAtlasStore.getState().satelliteCatalog?.get(sat.norad)?.name
+          const fallback =
+            sat.name && sat.name !== String(sat.norad) ? sat.name : `NORAD #${sat.norad}`
+          setSatelliteHover({
+            visible: true,
+            x: point.x,
+            y: point.y,
+            norad: sat.norad,
+            name: catName ?? fallback,
+          })
+          // Paint the white hover ring in the same frame; the per-batch
+          // refresh keeps it tracking the sat's motion afterwards.
+          const sel = selectedSatelliteRef.current
+          satHoverLayerRef.current?.setData(sel && sel.norad === sat.norad ? null : sat)
+        },
       })
+      satHoverTrackerRef.current = hoverTracker
+
+      map.on('mousemove', (e: maplibregl.MapMouseEvent) => {
+        if (!satellitesVisibleRef.current || !globeModeRef.current) return
+        hoverTracker.pointerMove(e.point)
+      })
+      map.on('mouseout', () => hoverTracker.pointerLeave())
+      map.on('move', () => hoverTracker.sceneChanged())
 
       // ── Ghost drag (compare mode) ─────────────────────────────────────────
       map.on('mousemove', (e: maplibregl.MapMouseEvent) => {
@@ -1024,6 +1023,8 @@ export default function Map() {
       window.addEventListener('keydown', handleKeyDown)
 
       const cleanup = () => {
+        hoverTracker.dispose()
+        satHoverTrackerRef.current = null
         cancelAnimationFrame(animFrameId)
         if (resumeTimer) clearTimeout(resumeTimer)
         if (revealTimer) clearTimeout(revealTimer)
@@ -1217,7 +1218,9 @@ export default function Map() {
       setTooltip({ visible: false, x: 0, y: 0, name: '', iso: '' })
       map.getCanvas().style.cursor = ''
     } else if (!satellitesVisible && wasVisible) {
-      // Cascade in the store cleared `satelliteHover`; reset the cursor too.
+      // Cascade in the store cleared `satelliteHover`; reset the cursor too,
+      // and drop the hover ring and the pointer the tracker was re-picking at.
+      satHoverTrackerRef.current?.reset()
       map.getCanvas().style.cursor = ''
     }
   }, [satellitesVisible, isMapLoaded, setTooltip])
@@ -1237,6 +1240,8 @@ export default function Map() {
       pauseAndResumeAfterRef.current?.(700)
     } else {
       map.setProjection({ type: 'mercator' })
+      // Satellites are globe-only; their hover goes with them.
+      satHoverTrackerRef.current?.reset()
       const restoredMin = computeMinZoom(map.getContainer().offsetWidth)
       map.setMinZoom(restoredMin)
       if (map.getZoom() < restoredMin) {
@@ -1441,6 +1446,8 @@ export default function Map() {
       refreshSelectedSatelliteOverlay()
       refreshSelectedSatelliteOrbit()
       refreshHoveredSatelliteOverlay()
+      // The satellites moved: re-pick under a still pointer.
+      satHoverTrackerRef.current?.sceneChanged()
     }
 
     // Local SGP4 propagation — the only writer while the feed is in
