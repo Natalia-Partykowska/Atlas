@@ -44,6 +44,7 @@ import { fetchSatelliteTLE } from '@/lib/satelliteTLE'
 import { pickNearestSatellite } from '@/lib/satellitePicking'
 import { createSatelliteHoverTracker } from '@/lib/satelliteHoverTracker'
 import type { SatelliteHoverTracker } from '@/lib/satelliteHoverTracker'
+import { autoRotationSpeed, createRotationHolds } from '@/lib/autoRotation'
 import { SatelliteSelectionLayer } from '@/lib/satelliteSelectionLayer'
 import { SatelliteHoverLayer } from '@/lib/satelliteHoverLayer'
 import { SatelliteOrbitLayer } from '@/lib/satelliteOrbitLayer'
@@ -59,8 +60,6 @@ const COLORS = {
   ocean: '#0D1929',
   border: '#2A3A4E',
 }
-
-const AUTO_SCROLL_SPEED = 4
 
 const computeMinZoom = (width: number) => Math.log2(width / 512) + 0.05
 
@@ -646,23 +645,13 @@ export default function Map() {
         .catch((err) => console.error('Ghost geometry fetch failed:', err))
 
       // ── Auto-scroll ───────────────────────────────────────────────────────
-      let isPaused = false
+      // Speed and holds (press, timed pause, satellite hover) come from
+      // `src/lib/autoRotation.ts`; modes and selections are checked here.
+      const rotationHolds = createRotationHolds()
       let lastTimestamp: number | null = null
       let animFrameId: number
-      let resumeTimer: ReturnType<typeof setTimeout> | null = null
 
-      const resumeAfter = (ms: number) => {
-        if (resumeTimer) clearTimeout(resumeTimer)
-        resumeTimer = setTimeout(() => {
-          isPaused = false
-          lastTimestamp = null
-        }, ms)
-      }
-
-      pauseAndResumeAfterRef.current = (ms: number) => {
-        isPaused = true
-        resumeAfter(ms)
-      }
+      pauseAndResumeAfterRef.current = (ms: number) => rotationHolds.pauseFor(ms)
 
       const isAnyInteractiveMode = () =>
         compareModeRef.current ||
@@ -674,14 +663,16 @@ export default function Map() {
         selectedSatelliteRef.current !== null
 
       const animate = (timestamp: number) => {
-        if (!isPaused && !isAnyInteractiveMode()) {
+        if (rotationHolds.isSpinning() && !isAnyInteractiveMode()) {
           if (lastTimestamp !== null) {
             const elapsed = (timestamp - lastTimestamp) / 1000
             const center = map.getCenter()
-            map.setCenter([center.lng + AUTO_SCROLL_SPEED * elapsed, center.lat])
+            const speed = autoRotationSpeed(map.getZoom())
+            map.setCenter([center.lng + speed * elapsed, center.lat])
           }
           lastTimestamp = timestamp
-        } else if (isAnyInteractiveMode()) {
+        } else {
+          // Held: the first frame after resuming mustn't jump by the pause.
           lastTimestamp = null
         }
         animFrameId = requestAnimationFrame(animate)
@@ -689,22 +680,10 @@ export default function Map() {
 
       animFrameId = requestAnimationFrame(animate)
 
-      map.on('mousedown', () => {
-        isPaused = true
-        lastTimestamp = null
-        if (resumeTimer) clearTimeout(resumeTimer)
-      })
-      map.on('mouseup', () => {
-        if (!isAnyInteractiveMode()) resumeAfter(5000)
-      })
-      map.on('touchstart', () => {
-        isPaused = true
-        lastTimestamp = null
-        if (resumeTimer) clearTimeout(resumeTimer)
-      })
-      map.on('touchend', () => {
-        if (!isAnyInteractiveMode()) resumeAfter(5000)
-      })
+      map.on('mousedown', () => rotationHolds.press())
+      map.on('mouseup', () => rotationHolds.release(!isAnyInteractiveMode()))
+      map.on('touchstart', () => rotationHolds.press())
+      map.on('touchend', () => rotationHolds.release(!isAnyInteractiveMode()))
 
       // ── Hover ─────────────────────────────────────────────────────────────
       map.on(
@@ -777,6 +756,9 @@ export default function Map() {
       const hoverTracker = createSatelliteHoverTracker({
         pick: pickSatelliteAt,
         onChange: (hover) => {
+          // The globe holds still while a satellite is hovered, so the dot
+          // stays under the pointer to click.
+          rotationHolds.hover(hover !== null)
           const canvas = map.getCanvas()
           if (!hover) {
             canvas.style.cursor = ''
@@ -1026,7 +1008,7 @@ export default function Map() {
         hoverTracker.dispose()
         satHoverTrackerRef.current = null
         cancelAnimationFrame(animFrameId)
-        if (resumeTimer) clearTimeout(resumeTimer)
+        rotationHolds.dispose()
         if (revealTimer) clearTimeout(revealTimer)
         map.off('sourcedata', onCountriesData)
         window.removeEventListener('keydown', handleKeyDown)
