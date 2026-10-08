@@ -755,6 +755,18 @@ export default function Map() {
         }
       })
 
+      // Hover and click both pick with the projection of the frame on screen,
+      // so the satellite picked is the dot drawn under the pointer.
+      const pickSatelliteAt = (point: { x: number; y: number }) => {
+        const canvas = map.getCanvas()
+        return pickNearestSatellite(
+          satLayerRef.current?.getProjectionFrame() ?? null,
+          { width: canvas.clientWidth, height: canvas.clientHeight },
+          point,
+          latestPositionsByNoradRef.current,
+        )
+      }
+
       // ── Satellite hover (globe + satellites mode only) ───────────────────
       map.on('mousemove', (e: maplibregl.MapMouseEvent) => {
         if (!satellitesVisibleRef.current || !globeModeRef.current) return
@@ -769,11 +781,7 @@ export default function Map() {
             canvas.style.cursor = ''
             return
           }
-          const c = map.getCenter()
-          const hit = pickNearestSatellite(map, { x: px, y: py }, positions, 22, {
-            lng: c.lng,
-            lat: c.lat,
-          })
+          const hit = pickSatelliteAt({ x: px, y: py })
           if (hit) {
             canvas.style.cursor = 'pointer'
             const cat = useAtlasStore.getState().satelliteCatalog
@@ -885,7 +893,8 @@ export default function Map() {
       map.on('click', (e: maplibregl.MapMouseEvent) => {
         // ── Satellite pick ─────────────────────────────────────────────────
         // Custom layers are invisible to queryRenderedFeatures, so we project
-        // each live position to screen space and find the nearest within 12px.
+        // each live position to screen space and take the nearest dot within
+        // SATELLITE_PICK_RADIUS_PX.
         if (
           satellitesVisibleRef.current &&
           globeModeRef.current &&
@@ -893,13 +902,8 @@ export default function Map() {
           !measureModeRef.current &&
           !antipodeModeRef.current
         ) {
-          const positions = latestPositionsByNoradRef.current
-          if (positions.size > 0) {
-            const c = map.getCenter()
-            const hit = pickNearestSatellite(map, e.point, positions, 22, {
-              lng: c.lng,
-              lat: c.lat,
-            })
+          if (latestPositionsByNoradRef.current.size > 0) {
+            const hit = pickSatelliteAt(e.point)
             if (hit) {
               const store = useAtlasStore.getState()
               store.setSelectedSatellite({ norad: hit.norad })

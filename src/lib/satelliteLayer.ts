@@ -7,6 +7,7 @@ import { GROUP_INDEX, SATELLITE_GROUPS } from './satellites'
 import type { SatGroup } from './satellites'
 // Shared with the picker, so a satellite is picked where it's drawn.
 import { ALTITUDE_SCALE } from './satelliteProjection'
+import type { ProjectionFrame } from './satelliteProjection'
 
 const INITIAL_CAPACITY = 32_768
 const POS_FLOATS_PER_VERTEX = 3 // mercX, mercY, altMeters
@@ -134,6 +135,11 @@ export class SatelliteLayer implements CustomLayerInterface {
 
   private readonly groupUniforms = buildGroupUniforms()
 
+  // The projection of the last frame drawn — what the user sees and aims at.
+  // Filled in place each render; getProjectionFrame() is null before the first.
+  private readonly lastFrame: ProjectionFrame = { mainMatrix: new Float64Array(16), transition: 0 }
+  private hasFrame = false
+
   constructor(map: MapLibreMap) {
     this.map = map
   }
@@ -161,6 +167,12 @@ export class SatelliteLayer implements CustomLayerInterface {
     this.gl = null
     this.capacity = 0
     this.count = 0
+    this.hasFrame = false
+  }
+
+  /** The projection of the frame on screen, for picking (`satellitePicking.ts`). */
+  getProjectionFrame(): ProjectionFrame | null {
+    return this.hasFrame ? this.lastFrame : null
   }
 
   setData(posBuffer: Float32Array, metaBuffer: Uint8Array, count: number): void {
@@ -203,6 +215,14 @@ export class SatelliteLayer implements CustomLayerInterface {
     args: CustomRenderMethodInput,
   ): void {
     if (!(gl instanceof WebGL2RenderingContext)) return
+
+    // Kept even when nothing is drawn, so the picker always has the camera
+    // of the frame on screen.
+    const pd = args.defaultProjectionData
+    this.lastFrame.mainMatrix.set(pd.mainMatrix as ArrayLike<number>)
+    this.lastFrame.transition = pd.projectionTransition
+    this.hasFrame = true
+
     if (this.count === 0 || !this.posVBO || !this.metaVBO) return
 
     const variant = args.shaderData.variantName
@@ -214,7 +234,6 @@ export class SatelliteLayer implements CustomLayerInterface {
 
     gl.useProgram(this.program)
 
-    const pd = args.defaultProjectionData
     if (this.uPosMatrix)
       gl.uniformMatrix4fv(this.uPosMatrix, false, pd.mainMatrix as Float32List)
     if (this.uTileMerc) gl.uniform4fv(this.uTileMerc, pd.tileMercatorCoords)

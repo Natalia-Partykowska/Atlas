@@ -1,173 +1,108 @@
 import { describe, it, expect } from 'vitest'
 import { pickNearestSatellite } from './satellitePicking'
+import { createScreenProjector } from './satelliteProjection'
 import type { SatPosition } from './satellites'
+import { CANVAS, at, makeGlobeCamera, perspectiveOffsetPx } from '@/test/globeCamera'
+import type { GlobeCamera } from '@/test/globeCamera'
 
-// Minimal stub of the bits of maplibregl.Map our function reads.
-function makeStubMap(
-  projectFn: (lngLat: [number, number]) => { x: number; y: number },
-  canvasW = 1000,
-  canvasH = 800,
-) {
-  return {
-    project: projectFn,
-    getCanvas: () => ({ clientWidth: canvasW, clientHeight: canvasH }),
-  } as unknown as Parameters<typeof pickNearestSatellite>[0]
+const W = CANVAS.width
+const H = CANVAS.height
+
+function sat(norad: number, lng: number, lat: number, altitudeKm = 550): SatPosition {
+  return { norad, name: String(norad), group: 'starlink', lng, lat, altitudeKm }
 }
 
-function sat(norad: number, lng: number, lat: number): SatPosition {
-  return { norad, name: String(norad), group: 'active', lng, lat, altitudeKm: 500 }
+function positionsOf(...sats: SatPosition[]): Map<number, SatPosition> {
+  return new Map(sats.map((s) => [s.norad, s]))
+}
+
+function drawnAt(cam: GlobeCamera, s: SatPosition) {
+  const p = at(createScreenProjector(cam.frame, W, H), s.lng, s.lat, s.altitudeKm)
+  if (!p) throw new Error(`satellite ${s.norad} isn't drawn`)
+  return p
+}
+
+// Longitude (on the equator) at which a satellite is drawn at screen x.
+function lngDrawnAtX(cam: GlobeCamera, x: number, altitudeKm: number): number {
+  let lo = 0
+  let hi = 10
+  for (let i = 0; i < 60; i++) {
+    const mid = (lo + hi) / 2
+    if (drawnAt(cam, sat(0, mid, 0, altitudeKm)).x < x) lo = mid
+    else hi = mid
+  }
+  return (lo + hi) / 2
 }
 
 describe('pickNearestSatellite', () => {
-  it('returns the closest satellite within the pixel radius', () => {
-    // Synthetic projection: each NORAD lands at the lng value in pixel space.
-    const map = makeStubMap(([lng]) => ({ x: lng, y: 100 }))
-    const positions = new Map<number, SatPosition>([
-      [1, sat(1, 100, 0)],
-      [2, sat(2, 110, 0)],
-      [3, sat(3, 200, 0)],
-    ])
-    const hit = pickNearestSatellite(map, { x: 105, y: 100 }, positions, 12)
-    // Distances: 5px (sat 1), 5px (sat 2), 95px (sat 3). Picks first encountered
-    // at the same distance; check it's one of {1, 2}.
-    expect(hit?.norad === 1 || hit?.norad === 2).toBe(true)
+  const cam = makeGlobeCamera(4.5, [0, 0])
+
+  it('returns the drawn satellite nearest the pointer', () => {
+    const a = sat(1, 1, 0)
+    const b = sat(2, 1.3, 0)
+    const pa = drawnAt(cam, a)
+    const pb = drawnAt(cam, b)
+    // Closer to b, with both within the radius.
+    const pointer = { x: pa.x + 0.7 * (pb.x - pa.x), y: pa.y }
+    expect(pickNearestSatellite(cam.frame, CANVAS, pointer, positionsOf(a, b))?.norad).toBe(2)
+    expect(pickNearestSatellite(cam.frame, CANVAS, pa, positionsOf(a, b))?.norad).toBe(1)
   })
 
-  it('returns null when nothing is within radius', () => {
-    const map = makeStubMap(([lng]) => ({ x: lng, y: 100 }))
-    const positions = new Map<number, SatPosition>([
-      [42, sat(42, 500, 0)],
-    ])
-    const hit = pickNearestSatellite(map, { x: 100, y: 100 }, positions, 12)
-    expect(hit).toBeNull()
+  it('returns null when no drawn satellite is within the radius', () => {
+    const a = sat(1, 1, 0)
+    const p = drawnAt(cam, a)
+    expect(pickNearestSatellite(cam.frame, CANVAS, { x: p.x + 30, y: p.y }, positionsOf(a))).toBeNull()
   })
 
-  it('ignores satellites that project off-canvas (back of globe)', () => {
-    // Sat 99 projects to (-200, 100) — well past the off-canvas buffer; sat 7
-    // at (105, 100). Cursor at (100, 100). Without the off-canvas filter, sat
-    // 99's chord-projected position could win; with the filter, sat 7 must.
-    const map = makeStubMap(([lng]) => ({ x: lng, y: 100 }))
-    const positions = new Map<number, SatPosition>([
-      [99, sat(99, -200, 0)],
-      [7, sat(7, 105, 0)],
-    ])
-    const hit = pickNearestSatellite(map, { x: 100, y: 100 }, positions, 12)
-    expect(hit?.norad).toBe(7)
+  it('respects the pixel radius', () => {
+    const a = sat(1, 1, 0)
+    const p = drawnAt(cam, a)
+    const pointer = { x: p.x + 10, y: p.y }
+    expect(pickNearestSatellite(cam.frame, CANVAS, pointer, positionsOf(a), 12)?.norad).toBe(1)
+    expect(pickNearestSatellite(cam.frame, CANVAS, pointer, positionsOf(a), 5)).toBeNull()
   })
 
   it('returns null on an empty positions map', () => {
-    const map = makeStubMap(() => ({ x: 0, y: 0 }))
-    const hit = pickNearestSatellite(map, { x: 100, y: 100 }, new Map(), 12)
-    expect(hit).toBeNull()
+    expect(pickNearestSatellite(cam.frame, CANVAS, { x: W / 2, y: H / 2 }, new Map())).toBeNull()
   })
 
-  it('respects a smaller pixel radius', () => {
-    const map = makeStubMap(([lng]) => ({ x: lng, y: 100 }))
-    const positions = new Map<number, SatPosition>([
-      [1, sat(1, 110, 0)], // 10px from cursor
-    ])
-    expect(pickNearestSatellite(map, { x: 100, y: 100 }, positions, 12)?.norad).toBe(1)
-    expect(pickNearestSatellite(map, { x: 100, y: 100 }, positions, 5)).toBeNull()
+  it('returns null before the first frame has been drawn', () => {
+    const a = sat(1, 0, 0)
+    expect(pickNearestSatellite(null, CANVAS, { x: W / 2, y: H / 2 }, positionsOf(a))).toBeNull()
   })
 
-  it('culls back-of-globe satellites when a camera center is provided', () => {
-    // Synthetic projection collapses any (lng, lat) onto the cursor itself —
-    // both the front-face and back-face sats are pixel-coincident, so the only
-    // way the test can prefer one is via the back-face cull.
-    const map = makeStubMap(() => ({ x: 100, y: 100 }))
-    const positions = new Map<number, SatPosition>([
-      // Camera looks at (0°, 0°). Front sat at (0°, 0°) → dot = +1, kept.
-      [1, { norad: 1, name: '1', group: 'iss', lng: 0, lat: 0, altitudeKm: 408 }],
-      // Back sat at (180°, 0°) → dot = -1, far below the limb threshold for
-      // a 408 km LEO orbit (≈ -0.342). Must be culled.
-      [2, { norad: 2, name: '2', group: 'iss', lng: 180, lat: 0, altitudeKm: 408 }],
-    ])
-    const hit = pickNearestSatellite(
-      map,
-      { x: 100, y: 100 },
-      positions,
-      12,
-      { lng: 0, lat: 0 },
-    )
-    expect(hit?.norad).toBe(1)
+  it('zoomed in, picks the dot under the pointer, not the neighbour the distant-camera guess put there', () => {
+    // Regression: the old picker placed satellite a at `r × ground offset`
+    // (~140 px right of centre at zoom 6.5), but it's drawn ~264 px right.
+    // A pointer on satellite b, drawn 5 px from that guess, used to pick a.
+    const zoomed = makeGlobeCamera(6.5, [0, 0])
+    const a = sat(1, 1, 0)
+    const oldGuessX = W / 2 + (1 + 550 / 6378.137) * perspectiveOffsetPx(zoomed, 1, 0)
+    const b = sat(2, lngDrawnAtX(zoomed, oldGuessX + 5, 550), 0)
+    const pointer = { x: oldGuessX, y: H / 2 }
+
+    expect(drawnAt(zoomed, a).x - pointer.x).toBeGreaterThan(100)
+    expect(pickNearestSatellite(zoomed.frame, CANVAS, pointer, positionsOf(a, b))?.norad).toBe(2)
   })
 
-  it('keeps high-altitude sats just past the geometric horizon', () => {
-    // Camera at (0°, 0°). A GEO sat at altitude 35 786 km on the back of the
-    // globe (lng = 100°) is still visible above the limb because the visibility
-    // cone for that altitude extends to ~171° from camera. Picker must NOT cull.
-    const map = makeStubMap(() => ({ x: 100, y: 100 }))
-    const positions = new Map<number, SatPosition>([
-      [
-        42,
-        {
-          norad: 42,
-          name: '42',
-          group: 'geo',
-          lng: 100,
-          lat: 0,
-          altitudeKm: 35_786,
-        },
-      ],
-    ])
-    const hit = pickNearestSatellite(
-      map,
-      { x: 100, y: 100 },
-      positions,
-      12,
-      { lng: 0, lat: 0 },
-    )
-    expect(hit?.norad).toBe(42)
+  it('picks a GEO satellite drawn beside the globe', () => {
+    // Zoomed out to 1, a GEO satellite on the far side (120° from the view
+    // centre) hangs in space well clear of the globe's edge and is drawn.
+    const zoomedOut = makeGlobeCamera(1, [0, 0])
+    const geo = { ...sat(1, 120, 0, 35_786), group: 'geo' as const }
+    const p = drawnAt(zoomedOut, geo)
+    expect(p.x - W / 2).toBeGreaterThan(400) // the globe itself is ~146 px in radius here
+    expect(pickNearestSatellite(zoomedOut.frame, CANVAS, p, positionsOf(geo))?.norad).toBe(1)
   })
 
-  it('skips back-face cull when no camera center is provided (flat mode)', () => {
-    const map = makeStubMap(() => ({ x: 100, y: 100 }))
-    const positions = new Map<number, SatPosition>([
-      // Without camera center, the back-face sat is eligible and wins by being
-      // the only candidate.
-      [99, { norad: 99, name: '99', group: 'iss', lng: 180, lat: 0, altitudeKm: 408 }],
-    ])
-    const hit = pickNearestSatellite(map, { x: 100, y: 100 }, positions, 12)
-    expect(hit?.norad).toBe(99)
-  })
-
-  it('applies altitude radial offset for high-altitude sats under globe', () => {
-    // Stub projection: (lng, lat) → (lng, 100). Sub-point of GEO sat at lng=10
-    // would land at (10, 100). Camera center (0, 0) → (0, 100). r ≈ 6.61, so
-    // the rendered dot is offset to (0 + 6.61 × 10, 100) = (66.1, 100).
-    const map = makeStubMap(([lng]) => ({ x: lng, y: 100 }))
-    const positions = new Map<number, SatPosition>([
-      [42, { norad: 42, name: '42', group: 'geo', lng: 10, lat: 0, altitudeKm: 35_786 }],
-    ])
-
-    // Cursor at the *sub-point* would have hit before the fix; with altitude
-    // offset the rendered dot is ~56 px away and there must be no hit.
-    expect(
-      pickNearestSatellite(map, { x: 10, y: 100 }, positions, 22, { lng: 0, lat: 0 }),
-    ).toBeNull()
-
-    // Cursor at the offset-corrected position — hit.
-    expect(
-      pickNearestSatellite(map, { x: 66, y: 100 }, positions, 22, {
-        lng: 0,
-        lat: 0,
-      })?.norad,
-    ).toBe(42)
-  })
-
-  it('leaves low-altitude sats almost unchanged by the altitude offset', () => {
-    // ISS at 408 km has r ≈ 1.064. Sub-point (10, 100) → offset (10.64, 100).
-    // Cursor at the sub-point should still hit comfortably within 22 px.
-    const map = makeStubMap(([lng]) => ({ x: lng, y: 100 }))
-    const positions = new Map<number, SatPosition>([
-      [
-        25_544,
-        { norad: 25_544, name: '25544', group: 'iss', lng: 10, lat: 0, altitudeKm: 408 },
-      ],
-    ])
-    expect(
-      pickNearestSatellite(map, { x: 10, y: 100 }, positions, 22, { lng: 0, lat: 0 })
-        ?.norad,
-    ).toBe(25_544)
+  it('never picks a satellite that isn’t drawn (GEO behind the camera at the default zoom)', () => {
+    // Regression: at zoom 2.5 the camera is closer than GEO, so a near-side
+    // GEO satellite isn't drawn, but the old picker put it ~265 px right of
+    // centre and it won picks there.
+    const defaultZoom = makeGlobeCamera(2.5, [0, 0])
+    const geo = { ...sat(1, 5, 0, 35_786), group: 'geo' as const }
+    const oldGuessX = W / 2 + (1 + 35_786 / 6378.137) * perspectiveOffsetPx(defaultZoom, 5, 0)
+    expect(oldGuessX).toBeLessThan(W)
+    expect(pickNearestSatellite(defaultZoom.frame, CANVAS, { x: oldGuessX, y: H / 2 }, positionsOf(geo))).toBeNull()
   })
 })

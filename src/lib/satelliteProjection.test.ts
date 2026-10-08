@@ -1,55 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { mat4 } from 'gl-matrix'
-import {
-  ALTITUDE_SCALE,
-  GLOBE_RADIUS_M,
-  createScreenProjector,
-  recoverCameraPosition,
-} from './satelliteProjection'
-import type { ProjectionFrame, ScreenPoint, ScreenProjector } from './satelliteProjection'
+import { createScreenProjector, recoverCameraPosition } from './satelliteProjection'
+import { CANVAS, at, makeGlobeCamera, perspectiveOffsetPx } from '@/test/globeCamera'
 
-const FOV = 0.6435011087932844 // MapLibre's default field of view (transform_helper.ts)
-const W = 1440
-const H = 900
+const W = CANVAS.width
+const H = CANVAS.height
 const DEG = Math.PI / 180
-
-interface GlobeCamera {
-  frame: ProjectionFrame
-  cameraToCenterDistance: number
-  globeRadiusPx: number
-}
-
-// The globe camera the way MapLibre 5.19 builds it
-// (VerticalPerspectiveTransform._calcMatrices), with no pitch, bearing, roll
-// or centre offset — which Atlas never uses.
-function makeGlobeCamera(zoom: number, [lng, lat]: [number, number]): GlobeCamera {
-  const cameraToCenterDistance = (0.5 / Math.tan(FOV / 2)) * H
-  const globeRadiusPx = (512 * 2 ** zoom) / (2 * Math.PI) / Math.cos(lat * DEG)
-  const m = new Float64Array(16)
-  mat4.perspective(m, FOV, W / H, 0.5, cameraToCenterDistance + globeRadiusPx * 2)
-  mat4.translate(m, m, [0, 0, -cameraToCenterDistance])
-  mat4.translate(m, m, [0, 0, -globeRadiusPx])
-  mat4.rotateX(m, m, lat * DEG)
-  mat4.rotateY(m, m, -lng * DEG)
-  mat4.scale(m, m, [globeRadiusPx, globeRadiusPx, globeRadiusPx])
-  return { frame: { mainMatrix: m, transition: 1 }, cameraToCenterDistance, globeRadiusPx }
-}
-
-function at(project: ScreenProjector, lng: number, lat: number, altitudeKm: number): ScreenPoint | null {
-  const out = { x: 0, y: 0 }
-  return project(lng, lat, altitudeKm, out) ? out : null
-}
-
-// Closed-form perspective offset from the canvas centre for a point `angleDeg`
-// from the view centre along the equator (or the meridian): the sphere's
-// centre is D + R in front of the camera, and the focal length is D pixels.
-function perspectiveOffsetPx(cam: GlobeCamera, angleDeg: number, altitudeKm: number): number {
-  const k = 1 + (altitudeKm * 1000 * ALTITUDE_SCALE) / GLOBE_RADIUS_M
-  const R = cam.globeRadiusPx
-  const D = cam.cameraToCenterDistance
-  const a = angleDeg * DEG
-  return (D * R * k * Math.sin(a)) / (D + R - R * k * Math.cos(a))
-}
 
 describe('createScreenProjector', () => {
   it('puts the view centre at altitude 0 on the canvas centre', () => {
