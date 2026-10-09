@@ -102,10 +102,11 @@ export default function Map() {
   // Mirrors `selectedConjunction` for the auto-scroll gate. The animation loop
   // runs outside React, so it needs a ref it can read every frame.
   const selectedConjunctionRef = useRef<{ noradA: number; noradB: number } | null>(null)
-  // Mirrors `satellitesVisible` for the imperative MapLibre handlers (mousemove
-  // / mouseleave / click) that need to gate on it without re-binding on each
-  // toggle.
-  const satellitesVisibleRef = useRef<boolean>(false)
+  // True while satellites are shown: toggled on *and* on the globe (they're
+  // globe-only). The imperative MapLibre handlers read it — satellites own
+  // hover and clicks then, countries the rest of the time, including on the
+  // flat map with the toggle still on.
+  const satellitesOnGlobeRef = useRef<boolean>(false)
   // Satellite hover: picks once per frame on pointer moves and re-picks when
   // the scene moves under a still pointer (`src/lib/satelliteHoverTracker.ts`).
   // Created in the load handler; the satellites effect reports position batches.
@@ -690,8 +691,8 @@ export default function Map() {
         'mousemove',
         'country-fills',
         (e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
-          // Satellites mode owns hover — country highlight + tooltip stay off.
-          if (satellitesVisibleRef.current) return
+          // Satellites own hover on the globe — country highlight + tooltip stay off.
+          if (satellitesOnGlobeRef.current) return
           if (!e.features || e.features.length === 0) return
           const feature = e.features[0]
           const id = feature.id as number
@@ -720,7 +721,7 @@ export default function Map() {
       )
 
       map.on('mouseleave', 'country-fills', () => {
-        if (satellitesVisibleRef.current) return
+        if (satellitesOnGlobeRef.current) return
         if (hoveredIdRef.current !== null) {
           map.setFeatureState(
             { source: 'countries', id: Number(hoveredIdRef.current) },
@@ -789,7 +790,7 @@ export default function Map() {
       satHoverTrackerRef.current = hoverTracker
 
       map.on('mousemove', (e: maplibregl.MapMouseEvent) => {
-        if (!satellitesVisibleRef.current || !globeModeRef.current) return
+        if (!satellitesOnGlobeRef.current) return
         hoverTracker.pointerMove(e.point)
       })
       map.on('mouseout', () => hoverTracker.pointerLeave())
@@ -829,8 +830,8 @@ export default function Map() {
         (e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
           if (!e.features || e.features.length === 0) return
 
-          // Satellites mode owns clicks (general handler picks the nearest sat).
-          if (satellitesVisibleRef.current) return
+          // Satellites own clicks on the globe (the general handler picks the nearest sat).
+          if (satellitesOnGlobeRef.current) return
 
           // Measure / antipode modes handled by the general click handler
           if (measureModeRef.current || antipodeModeRef.current) return
@@ -877,8 +878,7 @@ export default function Map() {
         // each live position to screen space and take the nearest dot within
         // SATELLITE_PICK_RADIUS_PX.
         if (
-          satellitesVisibleRef.current &&
-          globeModeRef.current &&
+          satellitesOnGlobeRef.current &&
           !compareModeRef.current &&
           !measureModeRef.current &&
           !antipodeModeRef.current
@@ -1179,17 +1179,21 @@ export default function Map() {
     }
   }, [antipodeMode, isMapLoaded])
 
-  // ─── Sync satellitesVisible into a ref + clear stale country hover ──────
+  // ─── Hand hover between countries and satellites ────────────────────────
+  // Satellites own hover and clicks while they're on the globe. That starts or
+  // ends with the toggle, or with Flat/Globe while the toggle is on; each time,
+  // the side giving up input clears what it showed.
   useEffect(() => {
     const map = mapRef.current
     if (!map || !isMapLoaded) return
 
-    const wasVisible = satellitesVisibleRef.current
-    satellitesVisibleRef.current = satellitesVisible
+    const wasOnGlobe = satellitesOnGlobeRef.current
+    const onGlobe = satellitesVisible && globeMode
+    satellitesOnGlobeRef.current = onGlobe
 
-    if (satellitesVisible && !wasVisible) {
-      // Country hover is gated off by the handlers below; clear any in-flight
-      // hover so the white-fill highlight + tooltip don't linger.
+    if (onGlobe && !wasOnGlobe) {
+      // Clear any in-flight country hover so the white-fill highlight +
+      // tooltip don't linger.
       if (hoveredIdRef.current !== null) {
         map.setFeatureState(
           { source: 'countries', id: Number(hoveredIdRef.current) },
@@ -1199,13 +1203,14 @@ export default function Map() {
       }
       setTooltip({ visible: false, x: 0, y: 0, name: '', iso: '' })
       map.getCanvas().style.cursor = ''
-    } else if (!satellitesVisible && wasVisible) {
-      // Cascade in the store cleared `satelliteHover`; reset the cursor too,
-      // and drop the hover ring and the pointer the tracker was re-picking at.
+    } else if (!onGlobe && wasOnGlobe) {
+      // Drop the satellite hover, its ring, and the pointer the tracker was
+      // re-picking at (the store cascade clears `satelliteHover` on toggle-off,
+      // not on Flat).
       satHoverTrackerRef.current?.reset()
       map.getCanvas().style.cursor = ''
     }
-  }, [satellitesVisible, isMapLoaded, setTooltip])
+  }, [satellitesVisible, globeMode, isMapLoaded, setTooltip])
 
   // ─── Sync globeMode ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -1222,8 +1227,6 @@ export default function Map() {
       pauseAndResumeAfterRef.current?.(700)
     } else {
       map.setProjection({ type: 'mercator' })
-      // Satellites are globe-only; their hover goes with them.
-      satHoverTrackerRef.current?.reset()
       const restoredMin = computeMinZoom(map.getContainer().offsetWidth)
       map.setMinZoom(restoredMin)
       if (map.getZoom() < restoredMin) {
