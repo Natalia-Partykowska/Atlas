@@ -189,9 +189,16 @@ async fn main() {
         .init();
 
     let cfg = config::Config::from_env();
-    info!(port = cfg.port, origins = ?cfg.allowed_origins, "starting atlas-orbit");
+    info!(
+        port = cfg.port,
+        origins = ?cfg.allowed_origins,
+        celestrak = %cfg.celestrak_base_url,
+        "starting atlas-orbit"
+    );
 
-    let initial = catalog::load()
+    let celestrak =
+        celestrak::CelesTrak::new(&cfg.celestrak_base_url).expect("build CelesTrak HTTP client");
+    let initial = catalog::load(&celestrak)
         .await
         .expect("initial catalog load failed — cannot start");
 
@@ -205,7 +212,7 @@ async fn main() {
     );
 
     let shared: SharedCatalog = Arc::new(ArcSwap::from_pointee(initial));
-    catalog::spawn_daily_refresh(shared.clone());
+    catalog::spawn_daily_refresh(shared.clone(), celestrak);
 
     let (tx, connections) = ws::spawn_broadcast_tick(shared.clone());
     let screener = ScreenerStats::new();

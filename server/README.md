@@ -34,7 +34,18 @@ Environment variables:
 |---|---|---|
 | `PORT` | `8080` | HTTP listen port |
 | `ALLOWED_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | Comma-separated CORS allow-list |
+| `CELESTRAK_BASE_URL` | `https://celestrak.org` | Where the TLE groups are downloaded from (see below) |
 | `RUST_LOG` | `atlas_orbit=info,tower_http=info` | tracing env filter |
+
+### Running it often without downloading from CelesTrak
+
+Every start downloads the whole catalog (7 groups) from CelesTrak, which blocks addresses that download the same data more than once per update (about every 2 hours). For repeated local runs, point `CELESTRAK_BASE_URL` at a server that answers CelesTrak's query with TLE text:
+
+```
+GET {CELESTRAK_BASE_URL}/NORAD/elements/gp.php?GROUP=<group>&FORMAT=tle
+```
+
+The groups are listed in `SOURCES` (`src/celestrak.rs`). A non-2xx answer, or a 2xx answer with no TLEs in it, counts as a failed download.
 
 ## Deploy
 

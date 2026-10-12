@@ -7,7 +7,7 @@ use chrono::{DateTime, Duration, Utc};
 use serde::Serialize;
 use tracing::{error, info, warn};
 
-use crate::celestrak::{self, RawEntry, SOURCES};
+use crate::celestrak::{CelesTrak, RawEntry, SOURCES};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -61,9 +61,7 @@ pub type SharedCatalog = Arc<ArcSwap<Catalog>>;
 
 /// Fetch every configured CelesTrak group, parse TLEs, build SGP4 constants.
 /// Deduplicates by NORAD ID (first occurrence wins — see `SOURCES` ordering).
-pub async fn load() -> Result<Catalog> {
-    let client = celestrak::build_http_client()?;
-
+pub async fn load(celestrak: &CelesTrak) -> Result<Catalog> {
     let mut seen: HashSet<u64> = HashSet::new();
     let mut entries: Vec<CatalogEntry> = Vec::new();
     let mut per_group_counts: Vec<(&str, usize)> = Vec::new();
@@ -73,7 +71,7 @@ pub async fn load() -> Result<Catalog> {
             // CelesTrak free API rate-limits aggressive back-to-back fetches.
             tokio::time::sleep(std::time::Duration::from_millis(800)).await;
         }
-        let raw = match celestrak::fetch_group(&client, group_name).await {
+        let raw = match celestrak.fetch_group(group_name).await {
             Ok(r) => r,
             Err(e) => {
                 warn!(error = ?e, group = group_name, "group fetch failed, skipping");
@@ -185,14 +183,14 @@ pub(crate) fn compute_apsides(mean_motion_rev_per_day: f64, eccentricity: f64) -
 
 /// Spawn a task that reloads the catalog every day at ~04:00 UTC and swaps it
 /// atomically into `shared`.
-pub fn spawn_daily_refresh(shared: SharedCatalog) {
+pub fn spawn_daily_refresh(shared: SharedCatalog, celestrak: CelesTrak) {
     tokio::spawn(async move {
         loop {
             let sleep_secs = seconds_until_next_0400_utc();
             info!(sleep_secs, "next TLE refresh scheduled");
             tokio::time::sleep(std::time::Duration::from_secs(sleep_secs)).await;
 
-            match load().await {
+            match load(&celestrak).await {
                 Ok(fresh) => {
                     let n = fresh.len();
                     shared.store(Arc::new(fresh));
