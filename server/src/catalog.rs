@@ -78,9 +78,7 @@ pub enum GroupStatus {
     Missing,
 }
 
-// Read by `/health` (Session 18, stage 4).
-#[allow(dead_code)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Failure {
     pub at: DateTime<Utc>,
     pub error: String,
@@ -114,7 +112,6 @@ impl GroupSlot {
     }
 
     /// The latest download's failure, if it failed.
-    #[allow(dead_code)] // read by `/health` (Session 18, stage 4)
     pub fn failure(&self) -> Option<&Failure> {
         self.failure.as_ref()
     }
@@ -210,6 +207,66 @@ impl GroupStore {
             .iter()
             .filter(|s| s.status() == GroupStatus::Missing)
             .map(|s| s.name)
+    }
+}
+
+/// What `/health` and the stream report about the catalog. Published by the
+/// maintenance task after every download pass (`downloads.rs`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct CatalogStatus {
+    /// The served catalog's `version`.
+    pub version: u64,
+    /// When missing or stale groups are downloaded again; `None` when every
+    /// group is fresh.
+    pub next_retry_at: Option<DateTime<Utc>>,
+    /// In `SOURCES` order.
+    pub groups: Vec<GroupReport>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct GroupReport {
+    pub name: &'static str,
+    pub status: GroupStatus,
+    /// Satellites in its last good download (before de-duplication).
+    pub entries: usize,
+    pub loaded_at: Option<DateTime<Utc>>,
+    /// Why the latest download failed, if it did.
+    pub failure: Option<Failure>,
+}
+
+pub type CatalogStatusRx = tokio::sync::watch::Receiver<CatalogStatus>;
+
+impl CatalogStatus {
+    pub fn of(store: &GroupStore, version: u64, next_retry_at: Option<DateTime<Utc>>) -> Self {
+        Self {
+            version,
+            next_retry_at,
+            groups: store
+                .slots()
+                .iter()
+                .map(|slot| GroupReport {
+                    name: slot.name,
+                    status: slot.status(),
+                    entries: slot.entries().len(),
+                    loaded_at: slot.loaded_at(),
+                    failure: slot.failure().cloned(),
+                })
+                .collect(),
+        }
+    }
+
+    /// Groups with no satellites in the catalog. A stale group still has
+    /// its satellites, so it isn't missing.
+    pub fn missing(&self) -> Vec<&'static str> {
+        self.groups
+            .iter()
+            .filter(|g| g.status == GroupStatus::Missing)
+            .map(|g| g.name)
+            .collect()
+    }
+
+    pub fn is_complete(&self) -> bool {
+        self.missing().is_empty()
     }
 }
 
@@ -442,6 +499,48 @@ mod tests {
         assert!(active.failure().is_none());
         assert_eq!(active.loaded_at(), Some(at(29)));
         assert_eq!(active.entries().len(), 4);
+    }
+
+    #[test]
+    fn the_status_reports_each_group_and_what_is_missing() {
+        let mut store = full_store(&[1000]);
+        store.record(idx("stations"), failed(), at(5));
+        let mut fresh_store = GroupStore::new();
+        fresh_store.record(idx("gps-ops"), ok(&[200]), at(1));
+
+        let status = CatalogStatus::of(&store, 7, Some(at(6)));
+        assert_eq!(status.version, 7);
+        assert_eq!(status.next_retry_at, Some(at(6)));
+        assert!(status.missing().is_empty(), "a stale group isn't missing");
+        assert!(status.is_complete());
+        let stations = &status.groups[idx("stations")];
+        assert_eq!(stations.status, GroupStatus::Stale);
+        assert_eq!(
+            stations.entries,
+            store.slots()[idx("stations")].entries().len()
+        );
+        assert_eq!(stations.loaded_at, Some(at(4)));
+        assert_eq!(stations.failure.as_ref().map(|f| f.at), Some(at(5)));
+        let active = &status.groups[idx("active")];
+        assert_eq!(
+            (active.status, active.entries, active.failure.is_none()),
+            (GroupStatus::Fresh, 1, true)
+        );
+
+        let partial = CatalogStatus::of(&fresh_store, 8, None);
+        assert_eq!(partial.groups.len(), SOURCES.len());
+        assert_eq!(
+            partial.missing(),
+            [
+                "stations",
+                "geo",
+                "cosmos-1408-debris",
+                "fengyun-1c-debris",
+                "iridium-33-debris",
+                "active"
+            ]
+        );
+        assert!(!partial.is_complete());
     }
 
     #[test]

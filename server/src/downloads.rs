@@ -10,7 +10,8 @@
 //!   (Railway's outgoing addresses are shared with other apps).
 //!
 //! The catalog is re-assembled and swapped only when a download brought new
-//! satellites, so clients aren't told it changed when it didn't.
+//! satellites, so clients aren't told it changed when it didn't. After every
+//! pass the task publishes a `CatalogStatus` for `/health` and the stream.
 
 use std::future::Future;
 use std::sync::Arc;
@@ -19,7 +20,10 @@ use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
 use tracing::{info, warn};
 
-use crate::catalog::{assemble, initial_catalog, Catalog, GroupStatus, GroupStore, SharedCatalog};
+use crate::catalog::{
+    assemble, initial_catalog, Catalog, CatalogStatus, CatalogStatusRx, GroupStatus, GroupStore,
+    SharedCatalog,
+};
 use crate::celestrak::{CelesTrak, RawEntry, SOURCES};
 
 /// Gap between two downloads in one pass.
@@ -195,6 +199,10 @@ impl Upkeep {
         }
     }
 
+    fn status(&self, version: u64) -> CatalogStatus {
+        CatalogStatus::of(&self.store, version, self.retry_due)
+    }
+
     fn log_schedule(&self) {
         let unhealthy: Vec<&str> = self
             .store
@@ -253,16 +261,18 @@ pub async fn load(celestrak: &CelesTrak) -> Result<(GroupStore, Catalog)> {
 
 /// Spawns the task that retries failed groups and refreshes the catalog (see
 /// the module docs). It owns `store` and is the only writer of `shared`.
+/// Returns the catalog status it publishes.
 pub fn spawn_catalog_maintenance(
     shared: SharedCatalog,
     store: GroupStore,
     fetcher: impl GroupFetcher,
     schedule: Schedule,
     clock: impl Clock,
-) {
+) -> CatalogStatusRx {
+    let mut upkeep = Upkeep::new(store, schedule, clock.now());
+    upkeep.log_schedule();
+    let (status_tx, status_rx) = tokio::sync::watch::channel(upkeep.status(shared.load().version));
     tokio::spawn(async move {
-        let mut upkeep = Upkeep::new(store, schedule, clock.now());
-        upkeep.log_schedule();
         loop {
             let pass = upkeep.next_pass();
             let wait = (pass.at - clock.now()).to_std().unwrap_or_default();
@@ -278,8 +288,12 @@ pub fn spawn_catalog_maintenance(
             }
             upkeep.after_pass(clock.now(), pass.retry, pass.refresh);
             upkeep.log_schedule();
+            // After the swap, so a client that reloads names for this version
+            // gets this catalog's names.
+            status_tx.send_replace(upkeep.status(shared.load().version));
         }
     });
+    status_rx
 }
 
 #[cfg(test)]
@@ -383,6 +397,7 @@ mod tests {
         fake: FakeCelesTrak,
         shared: SharedCatalog,
         clock: Arc<TestClock>,
+        status: CatalogStatusRx,
     }
 
     /// The server as it is after booting at `boot` (seconds after midnight):
@@ -408,7 +423,7 @@ mod tests {
             store.record(i, download, at(loaded));
         }
         let shared: SharedCatalog = Arc::new(ArcSwap::from_pointee(assemble(&store, 0, at(boot))));
-        spawn_catalog_maintenance(
+        let status = spawn_catalog_maintenance(
             shared.clone(),
             store,
             fake.clone(),
@@ -419,6 +434,7 @@ mod tests {
             fake,
             shared,
             clock,
+            status,
         }
     }
 
@@ -456,6 +472,7 @@ mod tests {
             fake,
             shared,
             clock,
+            ..
         } = boot(5 * HOUR, 5 * HOUR, &["active"]);
         let partial = shared.load().len();
         let first_version = shared.load().version;
@@ -487,6 +504,7 @@ mod tests {
             fake,
             shared,
             clock,
+            ..
         } = boot(5 * HOUR, 5 * HOUR, &["active"]);
         let before = shared.load_full();
 
@@ -500,11 +518,51 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn the_status_follows_every_pass() {
+        let Setup {
+            fake,
+            shared,
+            clock,
+            status,
+        } = boot(5 * HOUR, 5 * HOUR, &["active"]);
+        let first_version = shared.load().version;
+
+        let booted = status.borrow().clone();
+        assert_eq!(booted.version, first_version);
+        assert_eq!(booted.missing(), ["active"]);
+        assert_eq!(booted.next_retry_at, Some(at(5 * HOUR + 30 * MIN)));
+
+        // The 05:30 retry fails: the next one is an hour later, the catalog
+        // and its version stay.
+        run_until(&clock, 5 * HOUR + 31 * MIN).await;
+        let failed = status.borrow().clone();
+        assert_eq!(failed.version, first_version);
+        assert_eq!(failed.missing(), ["active"]);
+        assert_eq!(failed.next_retry_at, Some(at(6 * HOUR + 30 * MIN)));
+        let active = failed.groups.iter().find(|g| g.name == "active").unwrap();
+        assert_eq!(
+            active.failure.as_ref().map(|f| f.at),
+            Some(at(5 * HOUR + 30 * MIN))
+        );
+
+        // The 06:30 retry works: complete, nothing left to retry, and the
+        // version is the served catalog's.
+        fake.heal("active");
+        run_until(&clock, 6 * HOUR + 31 * MIN).await;
+        let restored = status.borrow().clone();
+        assert!(restored.is_complete());
+        assert_eq!(restored.next_retry_at, None);
+        assert!(restored.version > first_version);
+        assert_eq!(restored.version, shared.load().version);
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn a_failed_refresh_keeps_the_group_and_retries_it_after_30_min() {
         let Setup {
             fake,
             shared,
             clock,
+            ..
         } = boot(3 * HOUR, HOUR, &[]);
         let full = shared.load().len();
         fake.fail("active");

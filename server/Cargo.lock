@@ -80,6 +80,7 @@ dependencies = [
  "serde_json",
  "sgp4",
  "tokio",
+ "tokio-tungstenite",
  "tower",
  "tower-http",
  "tracing",

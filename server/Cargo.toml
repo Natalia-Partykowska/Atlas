@@ -25,6 +25,8 @@ futures-util = { version = "0.3", default-features = false, features = ["sink", 
 [dev-dependencies]
 # Paused time (`#[tokio::test(start_paused = true)]`) for the catalog schedule tests.
 tokio = { version = "1", features = ["test-util"] }
+# A WebSocket client for the stream test (the same version axum uses).
+tokio-tungstenite = "0.24"
 
 [profile.release]
 lto = "thin"
