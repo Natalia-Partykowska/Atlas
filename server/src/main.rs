@@ -18,14 +18,17 @@ use serde::Serialize;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
-use tracing::info;
+use tracing::{info, warn};
 
 mod catalog;
 mod celestrak;
 mod config;
 mod conjunctions;
+mod downloads;
 mod propagate;
 mod protocol;
+#[cfg(test)]
+mod test_support;
 mod viewport;
 mod ws;
 
@@ -198,7 +201,10 @@ async fn main() {
 
     let celestrak =
         celestrak::CelesTrak::new(&cfg.celestrak_base_url).expect("build CelesTrak HTTP client");
-    let (groups, initial) = catalog::load(&celestrak)
+    if cfg.catalog_retry_base_secs.is_some() || cfg.catalog_refresh_every_secs.is_some() {
+        warn!(schedule = ?cfg.catalog_schedule(), "catalog schedule overridden (local checks only)");
+    }
+    let (groups, initial) = downloads::load(&celestrak)
         .await
         .expect("initial catalog load failed — cannot start");
 
@@ -212,7 +218,13 @@ async fn main() {
     );
 
     let shared: SharedCatalog = Arc::new(ArcSwap::from_pointee(initial));
-    catalog::spawn_daily_refresh(shared.clone(), groups, celestrak);
+    downloads::spawn_catalog_maintenance(
+        shared.clone(),
+        groups,
+        celestrak,
+        cfg.catalog_schedule(),
+        downloads::SystemClock,
+    );
 
     let (tx, connections) = ws::spawn_broadcast_tick(shared.clone());
     let screener = ScreenerStats::new();

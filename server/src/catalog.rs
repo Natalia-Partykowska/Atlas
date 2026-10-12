@@ -3,11 +3,11 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use arc_swap::ArcSwap;
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use serde::Serialize;
 use tracing::{info, warn};
 
-use crate::celestrak::{CelesTrak, RawEntry, SOURCES};
+use crate::celestrak::{RawEntry, SOURCES};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -78,7 +78,7 @@ pub enum GroupStatus {
     Missing,
 }
 
-// Read by the retry schedule and `/health` (Session 18, stages 3–4).
+// Read by `/health` (Session 18, stage 4).
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct Failure {
@@ -109,13 +109,12 @@ impl GroupSlot {
     }
 
     /// When the satellites it holds were downloaded.
-    #[allow(dead_code)] // read by the retry schedule (Session 18, stage 3)
     pub fn loaded_at(&self) -> Option<DateTime<Utc>> {
         self.loaded.as_ref().map(|(_, at)| *at)
     }
 
     /// The latest download's failure, if it failed.
-    #[allow(dead_code)] // read by the retry schedule (Session 18, stage 3)
+    #[allow(dead_code)] // read by `/health` (Session 18, stage 4)
     pub fn failure(&self) -> Option<&Failure> {
         self.failure.as_ref()
     }
@@ -274,33 +273,6 @@ pub fn initial_catalog(store: &GroupStore, now: DateTime<Utc>) -> Result<Catalog
     Ok(catalog)
 }
 
-/// Downloads the groups at `which` (indices into `SOURCES`, in order) into the
-/// store.
-async fn download_groups(store: &mut GroupStore, celestrak: &CelesTrak, which: &[usize]) {
-    for (n, &idx) in which.iter().enumerate() {
-        if n > 0 {
-            // CelesTrak free API rate-limits aggressive back-to-back fetches.
-            tokio::time::sleep(std::time::Duration::from_millis(800)).await;
-        }
-        let download = celestrak.fetch_group(SOURCES[idx].1).await;
-        store.record(idx, download, Utc::now());
-    }
-}
-
-/// Downloads every group and assembles the first catalog. Groups that fail
-/// are missing until a later download works.
-pub async fn load(celestrak: &CelesTrak) -> Result<(GroupStore, Catalog)> {
-    let mut store = GroupStore::new();
-    let all: Vec<usize> = (0..SOURCES.len()).collect();
-    download_groups(&mut store, celestrak, &all).await;
-    let catalog = initial_catalog(&store, Utc::now())?;
-    if !store.is_complete() {
-        let missing: Vec<&str> = store.missing().collect();
-        warn!(?missing, "starting with an incomplete catalog");
-    }
-    Ok((store, catalog))
-}
-
 pub(crate) fn build_entry(raw: &RawEntry, group: Group) -> Result<CatalogEntry> {
     let elements = sgp4::Elements::from_tle(
         Some(raw.name.clone()),
@@ -364,73 +336,14 @@ pub(crate) fn compute_apsides(mean_motion_rev_per_day: f64, eccentricity: f64) -
     Some((perigee, apogee))
 }
 
-/// Spawn a task that downloads every group again each day at ~04:00 UTC and
-/// swaps the re-assembled catalog into `shared`. A group whose download fails
-/// keeps its previous satellites.
-pub fn spawn_daily_refresh(shared: SharedCatalog, mut store: GroupStore, celestrak: CelesTrak) {
-    tokio::spawn(async move {
-        let all: Vec<usize> = (0..SOURCES.len()).collect();
-        loop {
-            let sleep_secs = seconds_until_next_0400_utc();
-            info!(sleep_secs, "next TLE refresh scheduled");
-            tokio::time::sleep(std::time::Duration::from_secs(sleep_secs)).await;
-
-            download_groups(&mut store, &celestrak, &all).await;
-            let fresh = assemble(&store, shared.load().version, Utc::now());
-            let n = fresh.len();
-            shared.store(Arc::new(fresh));
-            info!(entries = n, "catalog refreshed");
-        }
-    });
-}
-
-fn seconds_until_next_0400_utc() -> u64 {
-    let now = Utc::now();
-    let today_0400 = now
-        .date_naive()
-        .and_hms_opt(4, 0, 0)
-        .expect("04:00:00 is a valid time")
-        .and_utc();
-    let target = if now < today_0400 {
-        today_0400
-    } else {
-        today_0400 + Duration::days(1)
-    };
-    (target - now).num_seconds().max(0) as u64
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::tle;
     use anyhow::anyhow;
-    use chrono::TimeZone;
+    use chrono::{Duration, TimeZone};
 
     // ── Per-group store ─────────────────────────────────────────────────────
-
-    const ISS_LINE1: &str = "1 25544U 98067A   26076.83874734  .00009567  00000+0  18567-3 0  9991";
-    const ISS_LINE2: &str = "2 25544  51.6336  32.0723 0006231 202.9067 157.1644 15.48349303557590";
-
-    /// A valid TLE for `norad` (the ISS's elements under another number).
-    fn tle(norad: u32) -> RawEntry {
-        let id = format!("{norad:05}");
-        RawEntry {
-            name: format!("SAT {norad}"),
-            line1: with_checksum(&ISS_LINE1[..68].replacen("25544", &id, 1)),
-            line2: with_checksum(&ISS_LINE2[..68].replacen("25544", &id, 1)),
-        }
-    }
-
-    fn with_checksum(line: &str) -> String {
-        let sum: u32 = line
-            .bytes()
-            .map(|c| match c {
-                b'-' => 1,
-                b'0'..=b'9' => u32::from(c - b'0'),
-                _ => 0,
-            })
-            .sum();
-        format!("{line}{}", sum % 10)
-    }
 
     fn ok(norads: &[u32]) -> Result<Vec<RawEntry>> {
         Ok(norads.iter().map(|&n| tle(n)).collect())

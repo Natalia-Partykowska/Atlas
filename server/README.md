@@ -35,6 +35,8 @@ Environment variables:
 | `PORT` | `8080` | HTTP listen port |
 | `ALLOWED_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | Comma-separated CORS allow-list |
 | `CELESTRAK_BASE_URL` | `https://celestrak.org` | Where the TLE groups are downloaded from (see below) |
+| `CATALOG_RETRY_BASE_SECS` | `1800` | Local checks only. First retry delay for a group whose download failed; later retries wait 2× and then 4× this (production: 30 min, 1 h, then every 2 h). The daily refresh skips groups downloaded within 4× this. |
+| `CATALOG_REFRESH_EVERY_SECS` | unset (daily at 04:00 UTC) | Local checks only. Refresh the catalog every N seconds instead. |
 | `RUST_LOG` | `atlas_orbit=info,tower_http=info` | tracing env filter |
 
 ### Running it often without downloading from CelesTrak
