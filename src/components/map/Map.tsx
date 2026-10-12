@@ -166,6 +166,7 @@ export default function Map() {
   const setSatelliteHover = useAtlasStore((s) => s.setSatelliteHover)
   const setSatelliteCount = useAtlasStore((s) => s.setSatelliteCount)
   const setSatelliteFeed = useAtlasStore((s) => s.setSatelliteFeed)
+  const setCatalogStatus = useAtlasStore((s) => s.setCatalogStatus)
   const feedLive = useAtlasStore((s) => s.satelliteFeed.status === 'live')
   const selectedSatellite = useAtlasStore((s) => s.selectedSatellite)
   const terminatorVisible = useAtlasStore((s) => s.terminatorVisible)
@@ -1482,6 +1483,7 @@ export default function Map() {
         },
         conjunctions: mergeConjunctionBatch,
         status: setSatelliteFeed,
+        catalogStatus: setCatalogStatus,
       },
     })
 
@@ -1521,7 +1523,7 @@ export default function Map() {
         map.off('moveend', moveendHandler)
       }
     }
-  }, [satellitesVisible, globeMode, isMapLoaded, mergeConjunctionBatch, clearConjunctionEvents, setSatelliteCount, setSatelliteFeed])
+  }, [satellitesVisible, globeMode, isMapLoaded, mergeConjunctionBatch, clearConjunctionEvents, setSatelliteCount, setSatelliteFeed, setCatalogStatus])
 
   // ─── Conjunction overlay (selection-only) ─────────────────────────────────
   //

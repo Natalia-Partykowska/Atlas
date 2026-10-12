@@ -1,5 +1,10 @@
 import { connectOrbitStream } from './orbitStream'
-import type { ConjunctionEvent, OrbitStreamHandle, ViewportBounds } from './orbitStream'
+import type {
+  CatalogStatus,
+  ConjunctionEvent,
+  OrbitStreamHandle,
+  ViewportBounds,
+} from './orbitStream'
 import {
   DROP_GRACE_MS,
   FIRST_BATCH_DEADLINE_MS,
@@ -86,6 +91,11 @@ export interface SatelliteFeedHooks {
   conjunctions: (events: ConjunctionEvent[]) => void
   /** The feed's state changed. Not called for every batch. */
   status: (state: SatelliteFeedState) => void
+  /** The live server's catalog status changed. Passed on while connecting,
+   *  live or reconnecting (the dropped stream's status stays during the
+   *  grace, like its last frame); `null` in `fallback` and `idle`, or when
+   *  the server doesn't send one. */
+  catalogStatus: (status: CatalogStatus | null) => void
 }
 
 /** The tab and network state that decide when a retry may run. */
@@ -169,6 +179,16 @@ export function createSatelliteFeed({
   let unsubscribeBrowser: (() => void) | null = null
   let lastPublished: SatelliteFeedState | null = null
 
+  // The current socket's latest catalog status, and the last one passed on.
+  let socketCatalog: CatalogStatus | null = null
+  let publishedCatalog: CatalogStatus | null = null
+
+  const publishCatalog = (next: CatalogStatus | null) => {
+    if (sameCatalogStatus(publishedCatalog, next)) return
+    publishedCatalog = next
+    hooks.catalogStatus(next)
+  }
+
   const publish = () => {
     const next: SatelliteFeedState = {
       status: STATUS_BY_MODE[mode],
@@ -213,6 +233,7 @@ export function createSatelliteFeed({
     socket?.close()
     socket = null
     gotBatch = false
+    socketCatalog = null
   }
 
   // Single funnel for all mode transitions. Tear down before arming.
@@ -235,6 +256,7 @@ export function createSatelliteFeed({
     switch (next) {
       case 'idle':
         hooks.screeningLost()
+        publishCatalog(null)
         break
       case 'reconnecting':
         graceTimer = setTimeout(() => {
@@ -246,11 +268,15 @@ export function createSatelliteFeed({
         // The bundled satellites come with no screener, so drop stale events
         // and let the panel say there's no live data.
         hooks.screeningLost()
+        publishCatalog(null)
         fallback = new AbortController()
         hooks.startFallback(fallback.signal)
         break
-      case 'connecting':
       case 'ws':
+        // A retry from fallback held its status until now.
+        publishCatalog(socketCatalog)
+        break
+      case 'connecting':
         break
     }
     publish()
@@ -277,6 +303,13 @@ export function createSatelliteFeed({
     // would mislead about what's still in the window.
     if (mode === 'idle' || mode === 'fallback') return
     hooks.conjunctions(events)
+  }
+
+  const onCatalogStatus = (status: CatalogStatus) => {
+    socketCatalog = status
+    // In fallback the bundled satellites are on screen, not this catalog;
+    // it's passed on if this socket goes live.
+    if (mode === 'connecting' || mode === 'ws' || mode === 'reconnecting') publishCatalog(status)
   }
 
   const scheduleRetry = (delay: number) => {
@@ -327,6 +360,7 @@ export function createSatelliteFeed({
       socket = connect(url!, {
         onPositions: current(onPositions),
         onConjunctions: current(onConjunctions),
+        onCatalogStatus: current(onCatalogStatus),
         onConnect: current(() => socket?.updateViewport(viewport())),
         onDisconnect: current(onSocketFailed),
       })
@@ -399,4 +433,14 @@ export function createSatelliteFeed({
       if (mode === 'ws') socket?.updateViewport(viewport())
     },
   }
+}
+
+function sameCatalogStatus(a: CatalogStatus | null, b: CatalogStatus | null): boolean {
+  if (a === b) return true
+  if (!a || !b) return false
+  return (
+    a.version === b.version &&
+    a.missingGroups.length === b.missingGroups.length &&
+    a.missingGroups.every((g, i) => g === b.missingGroups[i])
+  )
 }

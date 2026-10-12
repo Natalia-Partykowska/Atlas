@@ -33,6 +33,7 @@ export const useAtlasStore = create<AtlasState>((set, get) => ({
   satellitesVisible: false,
   satelliteCount: 0,
   satelliteFeed: SATELLITE_FEED_OFF,
+  catalogStatus: null,
   satelliteRetryRequest: 0,
   conjunctionsVisible: false,
   conjunctionEvents: [],
@@ -72,6 +73,7 @@ export const useAtlasStore = create<AtlasState>((set, get) => ({
             satellitesVisible: false,
             satelliteCount: 0,
             satelliteFeed: SATELLITE_FEED_OFF,
+            catalogStatus: null,
             conjunctionsVisible: false,
             conjunctionEvents: [],
             selectedConjunction: null,
@@ -83,6 +85,7 @@ export const useAtlasStore = create<AtlasState>((set, get) => ({
     ),
   setSatelliteCount: (satelliteCount: number) => set({ satelliteCount }),
   setSatelliteFeed: (satelliteFeed) => set({ satelliteFeed }),
+  setCatalogStatus: (catalogStatus) => set({ catalogStatus }),
   requestSatelliteRetry: () =>
     set((s) => ({ satelliteRetryRequest: s.satelliteRetryRequest + 1 })),
   // Enabling conjunctions force-enables globe + satellites; disabling clears state.

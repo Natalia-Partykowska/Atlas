@@ -22,6 +22,16 @@ export interface ConjunctionEvent {
   midAltKm: number
 }
 
+/** The catalog the server is serving (`CatalogStatusMsg`). The server sends
+ *  it first on every connection and again when it changes. */
+export interface CatalogStatus {
+  /** Changes whenever the catalog does; names are loaded per version. */
+  version: number
+  /** CelesTrak groups with no satellites in the catalog; empty when it's
+   *  complete. */
+  missingGroups: string[]
+}
+
 export interface OrbitStreamHandle {
   updateViewport: (bounds: ViewportBounds) => void
   close: () => void
@@ -30,6 +40,7 @@ export interface OrbitStreamHandle {
 export interface OrbitStreamCallbacks {
   onPositions: (positions: SatPosition[]) => void
   onConjunctions?: (events: ConjunctionEvent[]) => void
+  onCatalogStatus?: (status: CatalogStatus) => void
   onConnect?: () => void
   onDisconnect?: () => void
 }
@@ -37,6 +48,7 @@ export interface OrbitStreamCallbacks {
 // Wire-format type bytes — must match server/src/protocol.rs.
 export const MSG_POSITION_BATCH = 0x01
 export const MSG_CONJUNCTION_BATCH = 0x02
+export const MSG_CATALOG_STATUS = 0x03
 
 // Must match `Group::as_u8()` in server/src/catalog.rs
 const GROUP_BY_U8: Record<number, SatGroup> = {
@@ -153,6 +165,36 @@ export function decodeConjunctionBatch(
   return events
 }
 
+const utf8 = new TextDecoder()
+
+/**
+ * Decode a bincode-serialized `CatalogStatusMsg`:
+ *   u64 catalog_version | u64 n | n × (u64 len | UTF-8 group name)
+ * Little-endian. Returns null when the frame is cut short; bytes after the
+ * last group are ignored, so a later server can add fields.
+ */
+export function decodeCatalogStatus(
+  view: DataView,
+  offset: number,
+  len: number,
+): CatalogStatus | null {
+  if (len < 16) return null
+  const version = readU64LE(view, offset)
+  const count = readU64LE(view, offset + 8)
+  const end = offset + len
+  const missingGroups: string[] = []
+  let off = offset + 16
+  for (let i = 0; i < count; i++) {
+    if (off + 8 > end) return null
+    const nameLen = readU64LE(view, off)
+    off += 8
+    if (off + nameLen > end) return null
+    missingGroups.push(utf8.decode(new Uint8Array(view.buffer, view.byteOffset + off, nameLen)))
+    off += nameLen
+  }
+  return { version, missingGroups }
+}
+
 export function connectOrbitStream(
   url: string,
   cbs: OrbitStreamCallbacks,
@@ -200,6 +242,11 @@ export function connectOrbitStream(
       case MSG_CONJUNCTION_BATCH:
         cbs.onConjunctions?.(decodeConjunctionBatch(view, 1, payloadLen))
         break
+      case MSG_CATALOG_STATUS: {
+        const status = decodeCatalogStatus(view, 1, payloadLen)
+        if (status) cbs.onCatalogStatus?.(status)
+        break
+      }
       default:
         // Forward-compat: silently ignore unknown frame types.
         break

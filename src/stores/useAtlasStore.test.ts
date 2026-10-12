@@ -461,6 +461,7 @@ describe('satellite feed status', () => {
       satellitesVisible: false,
       satelliteFeed: SATELLITE_FEED_OFF,
       satelliteRetryRequest: 0,
+      catalogStatus: null,
     })
   })
 
@@ -492,5 +493,21 @@ describe('satellite feed status', () => {
     real().setSatelliteFeed({ ...SATELLITE_FEED_OFF, status: 'limited', canRetry: true })
     real().setSatellitesVisible(false)
     expect(real().satelliteFeed).toEqual(SATELLITE_FEED_OFF)
+  })
+
+  it('starts with no catalog status and stores what the feed passes on', () => {
+    expect(real().catalogStatus).toBeNull()
+    const partial = { version: 1_791_763_200_000, missingGroups: ['active'] }
+    real().setCatalogStatus(partial)
+    expect(real().catalogStatus).toEqual(partial)
+    real().setCatalogStatus(null)
+    expect(real().catalogStatus).toBeNull()
+  })
+
+  it('turning satellites off drops the catalog status', () => {
+    real().setSatellitesVisible(true)
+    real().setCatalogStatus({ version: 1, missingGroups: ['active'] })
+    real().setSatellitesVisible(false)
+    expect(real().catalogStatus).toBeNull()
   })
 })

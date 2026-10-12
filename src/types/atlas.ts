@@ -1,4 +1,4 @@
-import type { ConjunctionEvent } from '@/lib/orbitStream'
+import type { CatalogStatus, ConjunctionEvent } from '@/lib/orbitStream'
 import type { SatelliteCatalogEntry } from '@/lib/satelliteCatalog'
 import type { SatelliteFeedState } from '@/lib/satelliteFeed'
 
@@ -61,6 +61,10 @@ export interface AtlasState {
   // set) and when the next reconnect attempt runs. Written only by the feed
   // controller in Map.tsx; read by the UI.
   satelliteFeed: SatelliteFeedState
+  // The live server's catalog: its version and the CelesTrak groups missing
+  // from it. Null when not live from a server that sends it (the bundled
+  // satellites, an older server). Written only by the feed controller.
+  catalogStatus: CatalogStatus | null
   // Bumped by "Retry now". Map.tsx subscribes to it and asks the feed to
   // try the server straight away.
   satelliteRetryRequest: number
@@ -94,6 +98,7 @@ export interface AtlasState {
   setSatellitesVisible: (on: boolean) => void
   setSatelliteCount: (n: number) => void
   setSatelliteFeed: (state: SatelliteFeedState) => void
+  setCatalogStatus: (status: CatalogStatus | null) => void
   requestSatelliteRetry: () => void
   setConjunctionsVisible: (on: boolean) => void
   mergeConjunctionBatch: (events: ConjunctionEvent[]) => void

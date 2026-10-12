@@ -8,6 +8,7 @@ import {
   RETRY_MAX_MS,
 } from './orbitReconnect'
 import type {
+  CatalogStatus,
   ConjunctionEvent,
   OrbitStreamCallbacks,
   OrbitStreamHandle,
@@ -44,6 +45,9 @@ const CONJ: ConjunctionEvent = {
   midAltKm: 550,
 }
 
+const PARTIAL: CatalogStatus = { version: 1, missingGroups: ['active'] }
+const COMPLETE: CatalogStatus = { version: 2, missingGroups: [] }
+
 /** One fake orbit-server socket, driven by the test. */
 class FakeSocket {
   closed = false
@@ -72,6 +76,9 @@ class FakeSocket {
   }
   conjunctions(events: ConjunctionEvent[] = [CONJ]) {
     this.cbs.onConjunctions?.(events)
+  }
+  catalog(status: CatalogStatus) {
+    this.cbs.onCatalogStatus?.(status)
   }
   fail() {
     this.cbs.onDisconnect?.()
@@ -103,6 +110,7 @@ function recordingHooks() {
   const log: string[] = []
   const signals: AbortSignal[] = []
   const statuses: SatelliteFeedState[] = []
+  const catalogs: (CatalogStatus | null)[] = []
   const hooks: SatelliteFeedHooks = {
     paintLive: (p) => log.push(`paintLive:${p.length}`),
     startFallback: (signal) => {
@@ -114,8 +122,9 @@ function recordingHooks() {
     screeningLost: () => log.push('screeningLost'),
     conjunctions: (e) => log.push(`conjunctions:${e.length}`),
     status: (s) => statuses.push(s),
+    catalogStatus: (c) => catalogs.push(c),
   }
-  return { hooks, log, signals, statuses }
+  return { hooks, log, signals, statuses, catalogs }
 }
 
 // `null` means no URL configured (a default parameter would swallow `undefined`).
@@ -413,6 +422,108 @@ describe('createSatelliteFeed — retrying', () => {
     expect(f.openSockets()).toBe(1)
     vi.advanceTimersByTime(FIRST_BATCH_DEADLINE_MS)
     expect(f.openSockets()).toBeLessThanOrEqual(1)
+  })
+})
+
+// ── Catalog status ────────────────────────────────────────────────────────────
+
+describe('createSatelliteFeed — catalog status', () => {
+  it('passes the status on as soon as it arrives, before the first batch', () => {
+    const f = setup()
+    f.feed.start()
+    f.socket().open()
+    f.socket().catalog(PARTIAL)
+    expect(f.catalogs).toEqual([PARTIAL])
+
+    f.socket().batch()
+    expect(f.feed.mode).toBe('ws')
+    expect(f.catalogs).toEqual([PARTIAL])
+  })
+
+  it('passes changes on while live, and only changes', () => {
+    const f = setup()
+    f.feed.start()
+    f.socket().catalog(PARTIAL)
+    f.socket().batch()
+    f.socket().catalog({ version: 1, missingGroups: ['active'] })
+    f.socket().catalog(COMPLETE)
+    expect(f.catalogs).toEqual([PARTIAL, COMPLETE])
+  })
+
+  it('has none from a server that never sends it', () => {
+    const f = setup()
+    f.feed.start()
+    f.socket().batch()
+    expect(f.catalogs).toEqual([])
+  })
+
+  it("keeps the dropped stream's status through the grace, then takes the new socket's", () => {
+    const f = setup()
+    f.feed.start()
+    f.socket().catalog(PARTIAL)
+    f.socket().batch()
+    f.socket().fail()
+    expect(f.feed.mode).toBe('reconnecting')
+    expect(f.catalogs).toEqual([PARTIAL])
+
+    f.socket().catalog(COMPLETE)
+    expect(f.catalogs).toEqual([PARTIAL, COMPLETE])
+    f.socket().batch()
+    expect(f.catalogs).toEqual([PARTIAL, COMPLETE])
+  })
+
+  it('drops the status when it falls back to the bundled satellites', () => {
+    const f = setup()
+    f.feed.start()
+    f.socket().catalog(PARTIAL)
+    f.socket().batch()
+    f.socket().fail()
+    vi.advanceTimersByTime(DROP_GRACE_MS)
+    expect(f.feed.mode).toBe('fallback')
+    expect(f.catalogs).toEqual([PARTIAL, null])
+  })
+
+  it('drops the status on stop()', () => {
+    const f = setup()
+    f.feed.start()
+    f.socket().catalog(PARTIAL)
+    f.socket().batch()
+    f.feed.stop()
+    expect(f.catalogs).toEqual([PARTIAL, null])
+  })
+
+  it('holds the status of a retry from fallback until that retry goes live', () => {
+    const f = startDown(setup())
+    vi.advanceTimersByTime(1_000)
+    f.socket().open()
+    f.socket().catalog(PARTIAL)
+    expect(f.feed.mode).toBe('fallback')
+    expect(f.catalogs).toEqual([])
+
+    f.socket().batch()
+    expect(f.feed.mode).toBe('ws')
+    expect(f.catalogs).toEqual([PARTIAL])
+  })
+
+  it('forgets the status of an attempt that failed', () => {
+    const f = startDown(setup())
+    vi.advanceTimersByTime(1_000)
+    f.socket().catalog(PARTIAL)
+    f.socket().fail()
+    vi.advanceTimersByTime(2_000)
+    // The next attempt reaches a server that doesn't send a status.
+    f.socket().batch()
+    expect(f.feed.mode).toBe('ws')
+    expect(f.catalogs).toEqual([])
+  })
+
+  it('ignores the status of a replaced socket', () => {
+    const f = startDown(setup())
+    const dead = f.socket()
+    vi.advanceTimersByTime(1_000)
+    dead.catalog(PARTIAL)
+    f.socket().batch()
+    expect(f.catalogs).toEqual([])
   })
 })
 
