@@ -198,7 +198,7 @@ async fn main() {
 
     let celestrak =
         celestrak::CelesTrak::new(&cfg.celestrak_base_url).expect("build CelesTrak HTTP client");
-    let initial = catalog::load(&celestrak)
+    let (groups, initial) = catalog::load(&celestrak)
         .await
         .expect("initial catalog load failed — cannot start");
 
@@ -212,7 +212,7 @@ async fn main() {
     );
 
     let shared: SharedCatalog = Arc::new(ArcSwap::from_pointee(initial));
-    catalog::spawn_daily_refresh(shared.clone(), celestrak);
+    catalog::spawn_daily_refresh(shared.clone(), groups, celestrak);
 
     let (tx, connections) = ws::spawn_broadcast_tick(shared.clone());
     let screener = ScreenerStats::new();
@@ -281,6 +281,7 @@ mod tests {
         let cat = Catalog {
             entries,
             loaded_at: Utc::now(),
+            version: 1,
         };
         let shared: catalog::SharedCatalog = Arc::new(ArcSwap::from_pointee(cat));
         let (tx, _) = broadcast::channel::<ws::PositionsTick>(4);

@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use arc_swap::ArcSwap;
 use chrono::{DateTime, Duration, Utc};
 use serde::Serialize;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 use crate::celestrak::{CelesTrak, RawEntry, SOURCES};
 
@@ -33,6 +33,7 @@ impl Group {
     }
 }
 
+#[derive(Clone)]
 pub struct CatalogEntry {
     pub norad_id: u64,
     pub name: String,
@@ -46,9 +47,15 @@ pub struct CatalogEntry {
     pub intl_designator: String,
 }
 
+/// The catalog the server propagates and serves, assembled from the groups'
+/// downloads (see `assemble`).
 pub struct Catalog {
     pub entries: Vec<CatalogEntry>,
+    /// When it was assembled.
     pub loaded_at: DateTime<Utc>,
+    /// Changes with every assembly and only grows: the assembly time in ms,
+    /// or the previous version + 1 if that isn't later.
+    pub version: u64,
 }
 
 impl Catalog {
@@ -59,44 +66,171 @@ impl Catalog {
 
 pub type SharedCatalog = Arc<ArcSwap<Catalog>>;
 
-/// Fetch every configured CelesTrak group, parse TLEs, build SGP4 constants.
-/// Deduplicates by NORAD ID (first occurrence wins — see `SOURCES` ordering).
-pub async fn load(celestrak: &CelesTrak) -> Result<Catalog> {
-    let mut seen: HashSet<u64> = HashSet::new();
-    let mut entries: Vec<CatalogEntry> = Vec::new();
-    let mut per_group_counts: Vec<(&str, usize)> = Vec::new();
+/// Where a `SOURCES` group stands after its downloads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GroupStatus {
+    /// The last download worked.
+    Fresh,
+    /// The last download failed; the satellites are from an earlier one.
+    Stale,
+    /// No download has worked yet, so its satellites are absent.
+    Missing,
+}
 
-    for (idx, (group, group_name)) in SOURCES.iter().enumerate() {
-        if idx > 0 {
-            // CelesTrak free API rate-limits aggressive back-to-back fetches.
-            tokio::time::sleep(std::time::Duration::from_millis(800)).await;
-        }
-        let raw = match celestrak.fetch_group(group_name).await {
-            Ok(r) => r,
-            Err(e) => {
-                warn!(error = ?e, group = group_name, "group fetch failed, skipping");
-                continue;
-            }
-        };
+// Read by the retry schedule and `/health` (Session 18, stages 3–4).
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct Failure {
+    pub at: DateTime<Utc>,
+    pub error: String,
+}
 
-        let before = entries.len();
-        for entry in raw {
-            match build_entry(&entry, *group) {
-                Ok(built) => {
-                    if seen.insert(built.norad_id) {
-                        entries.push(built);
-                    }
-                }
-                Err(e) => {
-                    warn!(error = ?e, name = %entry.name, "skip TLE");
-                }
-            }
+/// One `SOURCES` group: the satellites of its last good download, and the
+/// failure if the latest download failed.
+pub struct GroupSlot {
+    pub name: &'static str,
+    pub group: Group,
+    loaded: Option<(Vec<CatalogEntry>, DateTime<Utc>)>,
+    failure: Option<Failure>,
+}
+
+impl GroupSlot {
+    pub fn status(&self) -> GroupStatus {
+        match (&self.loaded, &self.failure) {
+            (None, _) => GroupStatus::Missing,
+            (Some(_), Some(_)) => GroupStatus::Stale,
+            (Some(_), None) => GroupStatus::Fresh,
         }
-        per_group_counts.push((group_name, entries.len() - before));
     }
 
-    if entries.is_empty() {
-        anyhow::bail!("catalog load produced zero entries");
+    pub fn entries(&self) -> &[CatalogEntry] {
+        self.loaded.as_ref().map_or(&[], |(entries, _)| entries)
+    }
+
+    /// When the satellites it holds were downloaded.
+    #[allow(dead_code)] // read by the retry schedule (Session 18, stage 3)
+    pub fn loaded_at(&self) -> Option<DateTime<Utc>> {
+        self.loaded.as_ref().map(|(_, at)| *at)
+    }
+
+    /// The latest download's failure, if it failed.
+    #[allow(dead_code)] // read by the retry schedule (Session 18, stage 3)
+    pub fn failure(&self) -> Option<&Failure> {
+        self.failure.as_ref()
+    }
+}
+
+/// Every group's downloads, kept so that a failed download never removes a
+/// group's satellites from the catalog: the catalog is re-assembled from the
+/// store after each download pass.
+pub struct GroupStore {
+    slots: Vec<GroupSlot>,
+}
+
+impl GroupStore {
+    pub fn new() -> Self {
+        Self {
+            slots: SOURCES
+                .iter()
+                .map(|&(group, name)| GroupSlot {
+                    name,
+                    group,
+                    loaded: None,
+                    failure: None,
+                })
+                .collect(),
+        }
+    }
+
+    /// In `SOURCES` order.
+    pub fn slots(&self) -> &[GroupSlot] {
+        &self.slots
+    }
+
+    /// Records one download of `SOURCES[idx]`. A download with no usable TLE
+    /// counts as failed. Returns whether the group's satellites changed.
+    pub fn record(
+        &mut self,
+        idx: usize,
+        download: Result<Vec<RawEntry>>,
+        now: DateTime<Utc>,
+    ) -> bool {
+        let slot = &mut self.slots[idx];
+        let built = download.and_then(|raw| {
+            let total = raw.len();
+            let entries: Vec<CatalogEntry> = raw
+                .iter()
+                .filter_map(|r| match build_entry(r, slot.group) {
+                    Ok(entry) => Some(entry),
+                    Err(e) => {
+                        warn!(error = ?e, name = %r.name, "skip TLE");
+                        None
+                    }
+                })
+                .collect();
+            if entries.is_empty() {
+                anyhow::bail!("none of the {total} TLEs could be used");
+            }
+            Ok(entries)
+        });
+
+        match built {
+            Ok(entries) => {
+                if slot.failure.is_some() {
+                    info!(group = slot.name, entries = entries.len(), "group restored");
+                }
+                slot.loaded = Some((entries, now));
+                slot.failure = None;
+                true
+            }
+            Err(e) => {
+                let error = format!("{e:#}");
+                match slot.entries().len() {
+                    0 => {
+                        warn!(group = slot.name, %error, "group download failed; it has no satellites yet")
+                    }
+                    kept => {
+                        warn!(group = slot.name, %error, kept, "group download failed; keeping its previous satellites")
+                    }
+                }
+                slot.failure = Some(Failure { at: now, error });
+                false
+            }
+        }
+    }
+
+    /// True when no group is missing. A stale group still has all its
+    /// satellites, so it doesn't make the catalog incomplete.
+    pub fn is_complete(&self) -> bool {
+        self.missing().next().is_none()
+    }
+
+    pub fn missing(&self) -> impl Iterator<Item = &'static str> + '_ {
+        self.slots
+            .iter()
+            .filter(|s| s.status() == GroupStatus::Missing)
+            .map(|s| s.name)
+    }
+}
+
+/// Builds the catalog from every group's satellites, in `SOURCES` order. A
+/// satellite listed by several groups keeps the first one (stations, GPS, GEO
+/// and the debris fields before the catch-all `active`), whether that group is
+/// fresh or stale.
+pub fn assemble(store: &GroupStore, prev_version: u64, now: DateTime<Utc>) -> Catalog {
+    let mut seen: HashSet<u64> = HashSet::new();
+    let mut entries: Vec<CatalogEntry> = Vec::new();
+    let mut breakdown: Vec<(&str, usize)> = Vec::new();
+
+    for slot in store.slots() {
+        let before = entries.len();
+        for entry in slot.entries() {
+            if seen.insert(entry.norad_id) {
+                entries.push(entry.clone());
+            }
+        }
+        breakdown.push((slot.name, entries.len() - before));
     }
 
     // Promote ISS to its own group (NORAD ID 25544 is the Zarya module).
@@ -106,16 +240,65 @@ pub async fn load(celestrak: &CelesTrak) -> Result<Catalog> {
         }
     }
 
+    let version = (now.timestamp_millis().max(0) as u64).max(prev_version + 1);
+    let missing: Vec<&str> = store.missing().collect();
+    let stale: Vec<&str> = store
+        .slots()
+        .iter()
+        .filter(|s| s.status() == GroupStatus::Stale)
+        .map(|s| s.name)
+        .collect();
     info!(
         total = entries.len(),
-        breakdown = ?per_group_counts,
-        "catalog loaded"
+        version,
+        ?missing,
+        ?stale,
+        ?breakdown,
+        "catalog assembled"
     );
 
-    Ok(Catalog {
+    Catalog {
         entries,
-        loaded_at: Utc::now(),
-    })
+        loaded_at: now,
+        version,
+    }
+}
+
+/// The catalog to start with. Fails when no group produced a satellite: the
+/// server has nothing to serve.
+pub fn initial_catalog(store: &GroupStore, now: DateTime<Utc>) -> Result<Catalog> {
+    let catalog = assemble(store, 0, now);
+    if catalog.entries.is_empty() {
+        anyhow::bail!("catalog load produced zero entries");
+    }
+    Ok(catalog)
+}
+
+/// Downloads the groups at `which` (indices into `SOURCES`, in order) into the
+/// store.
+async fn download_groups(store: &mut GroupStore, celestrak: &CelesTrak, which: &[usize]) {
+    for (n, &idx) in which.iter().enumerate() {
+        if n > 0 {
+            // CelesTrak free API rate-limits aggressive back-to-back fetches.
+            tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+        }
+        let download = celestrak.fetch_group(SOURCES[idx].1).await;
+        store.record(idx, download, Utc::now());
+    }
+}
+
+/// Downloads every group and assembles the first catalog. Groups that fail
+/// are missing until a later download works.
+pub async fn load(celestrak: &CelesTrak) -> Result<(GroupStore, Catalog)> {
+    let mut store = GroupStore::new();
+    let all: Vec<usize> = (0..SOURCES.len()).collect();
+    download_groups(&mut store, celestrak, &all).await;
+    let catalog = initial_catalog(&store, Utc::now())?;
+    if !store.is_complete() {
+        let missing: Vec<&str> = store.missing().collect();
+        warn!(?missing, "starting with an incomplete catalog");
+    }
+    Ok((store, catalog))
 }
 
 pub(crate) fn build_entry(raw: &RawEntry, group: Group) -> Result<CatalogEntry> {
@@ -181,25 +364,22 @@ pub(crate) fn compute_apsides(mean_motion_rev_per_day: f64, eccentricity: f64) -
     Some((perigee, apogee))
 }
 
-/// Spawn a task that reloads the catalog every day at ~04:00 UTC and swaps it
-/// atomically into `shared`.
-pub fn spawn_daily_refresh(shared: SharedCatalog, celestrak: CelesTrak) {
+/// Spawn a task that downloads every group again each day at ~04:00 UTC and
+/// swaps the re-assembled catalog into `shared`. A group whose download fails
+/// keeps its previous satellites.
+pub fn spawn_daily_refresh(shared: SharedCatalog, mut store: GroupStore, celestrak: CelesTrak) {
     tokio::spawn(async move {
+        let all: Vec<usize> = (0..SOURCES.len()).collect();
         loop {
             let sleep_secs = seconds_until_next_0400_utc();
             info!(sleep_secs, "next TLE refresh scheduled");
             tokio::time::sleep(std::time::Duration::from_secs(sleep_secs)).await;
 
-            match load(&celestrak).await {
-                Ok(fresh) => {
-                    let n = fresh.len();
-                    shared.store(Arc::new(fresh));
-                    info!(entries = n, "catalog refreshed");
-                }
-                Err(e) => {
-                    error!(error = ?e, "catalog refresh failed; keeping previous catalog");
-                }
-            }
+            download_groups(&mut store, &celestrak, &all).await;
+            let fresh = assemble(&store, shared.load().version, Utc::now());
+            let n = fresh.len();
+            shared.store(Arc::new(fresh));
+            info!(entries = n, "catalog refreshed");
         }
     });
 }
@@ -222,6 +402,206 @@ fn seconds_until_next_0400_utc() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::anyhow;
+    use chrono::TimeZone;
+
+    // ── Per-group store ─────────────────────────────────────────────────────
+
+    const ISS_LINE1: &str = "1 25544U 98067A   26076.83874734  .00009567  00000+0  18567-3 0  9991";
+    const ISS_LINE2: &str = "2 25544  51.6336  32.0723 0006231 202.9067 157.1644 15.48349303557590";
+
+    /// A valid TLE for `norad` (the ISS's elements under another number).
+    fn tle(norad: u32) -> RawEntry {
+        let id = format!("{norad:05}");
+        RawEntry {
+            name: format!("SAT {norad}"),
+            line1: with_checksum(&ISS_LINE1[..68].replacen("25544", &id, 1)),
+            line2: with_checksum(&ISS_LINE2[..68].replacen("25544", &id, 1)),
+        }
+    }
+
+    fn with_checksum(line: &str) -> String {
+        let sum: u32 = line
+            .bytes()
+            .map(|c| match c {
+                b'-' => 1,
+                b'0'..=b'9' => u32::from(c - b'0'),
+                _ => 0,
+            })
+            .sum();
+        format!("{line}{}", sum % 10)
+    }
+
+    fn ok(norads: &[u32]) -> Result<Vec<RawEntry>> {
+        Ok(norads.iter().map(|&n| tle(n)).collect())
+    }
+
+    fn failed() -> Result<Vec<RawEntry>> {
+        Err(anyhow!("non-2xx from celestrak: 503 Service Unavailable"))
+    }
+
+    /// `hours` after midnight UTC on 2026-10-12 (28 is 04:00 the next day).
+    fn at(hours: i64) -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 10, 12, 0, 0, 0).unwrap() + Duration::hours(hours)
+    }
+
+    fn idx(name: &str) -> usize {
+        SOURCES.iter().position(|(_, n)| *n == name).unwrap()
+    }
+
+    fn norads(catalog: &Catalog) -> Vec<u64> {
+        let mut ids: Vec<u64> = catalog.entries.iter().map(|e| e.norad_id).collect();
+        ids.sort_unstable();
+        ids
+    }
+
+    /// Every group downloaded once, `active` with `active`.
+    fn full_store(active: &[u32]) -> GroupStore {
+        let mut store = GroupStore::new();
+        for (i, (_, name)) in SOURCES.iter().enumerate() {
+            let download = if *name == "active" {
+                ok(active)
+            } else {
+                ok(&[10_000 + i as u32])
+            };
+            store.record(i, download, at(4));
+        }
+        store
+    }
+
+    #[test]
+    fn a_group_never_downloaded_is_missing() {
+        let mut store = GroupStore::new();
+        assert!(store
+            .slots()
+            .iter()
+            .all(|s| s.status() == GroupStatus::Missing));
+
+        store.record(idx("stations"), ok(&[25544]), at(4));
+        store.record(idx("active"), failed(), at(4));
+
+        let active = &store.slots()[idx("active")];
+        assert_eq!(active.status(), GroupStatus::Missing);
+        assert!(active.entries().is_empty());
+        assert_eq!(active.loaded_at(), None);
+        let failure = active.failure().expect("the failure is kept");
+        assert_eq!(failure.at, at(4));
+        assert!(failure.error.contains("503"), "{}", failure.error);
+
+        assert!(!store.is_complete());
+        assert!(store.missing().any(|name| name == "active"));
+        assert_eq!(norads(&assemble(&store, 0, at(4))), [25544]);
+    }
+
+    #[test]
+    fn a_failed_download_keeps_the_groups_previous_satellites() {
+        let mut store = full_store(&[1, 2, 3]);
+        let before = assemble(&store, 0, at(4));
+
+        // The next day's refresh fails for `active`.
+        store.record(idx("active"), failed(), at(28));
+
+        let active = &store.slots()[idx("active")];
+        assert_eq!(active.status(), GroupStatus::Stale);
+        assert_eq!(active.entries().len(), 3);
+        assert_eq!(
+            active.loaded_at(),
+            Some(at(4)),
+            "loaded_at is the last good download"
+        );
+        assert_eq!(active.failure().unwrap().at, at(28));
+        // Stale isn't missing: every satellite is still there.
+        assert!(store.is_complete());
+        assert_eq!(
+            norads(&assemble(&store, before.version, at(28))),
+            norads(&before)
+        );
+    }
+
+    #[test]
+    fn a_stale_group_is_fresh_again_after_a_download() {
+        let mut store = full_store(&[1, 2, 3]);
+        store.record(idx("active"), failed(), at(28));
+        store.record(idx("active"), ok(&[1, 2, 3, 4]), at(29));
+
+        let active = &store.slots()[idx("active")];
+        assert_eq!(active.status(), GroupStatus::Fresh);
+        assert!(active.failure().is_none());
+        assert_eq!(active.loaded_at(), Some(at(29)));
+        assert_eq!(active.entries().len(), 4);
+    }
+
+    #[test]
+    fn a_download_with_no_valid_tles_counts_as_failed() {
+        let mut store = full_store(&[1, 2, 3]);
+        let mut broken = tle(4);
+        broken.line2.replace_range(
+            68..69,
+            if broken.line2.ends_with('0') {
+                "1"
+            } else {
+                "0"
+            },
+        );
+
+        store.record(idx("active"), Ok(vec![broken]), at(28));
+
+        let active = &store.slots()[idx("active")];
+        assert_eq!(active.status(), GroupStatus::Stale);
+        assert_eq!(active.entries().len(), 3);
+    }
+
+    #[test]
+    fn a_satellite_stays_in_the_first_group_that_lists_it_even_when_that_group_is_stale() {
+        let mut store = GroupStore::new();
+        store.record(idx("stations"), ok(&[25544, 49044]), at(4));
+        store.record(idx("active"), ok(&[25544, 49044, 1, 1]), at(4));
+        store.record(idx("stations"), failed(), at(28));
+
+        let catalog = assemble(&store, 0, at(28));
+        assert_eq!(
+            norads(&catalog),
+            [1, 25544, 49044],
+            "duplicates appear once"
+        );
+        let group_of = |id| {
+            catalog
+                .entries
+                .iter()
+                .find(|e| e.norad_id == id)
+                .unwrap()
+                .group
+        };
+        assert_eq!(group_of(49044), Group::Station);
+        assert_eq!(group_of(1), Group::Active);
+        // The ISS (NORAD 25544, the Zarya module) gets its own group.
+        assert_eq!(group_of(25544), Group::Iss);
+    }
+
+    #[test]
+    fn a_catalog_with_no_satellites_is_an_error_at_boot() {
+        let mut store = GroupStore::new();
+        for i in 0..SOURCES.len() {
+            store.record(i, failed(), at(4));
+        }
+        assert!(initial_catalog(&store, at(4)).is_err());
+
+        store.record(idx("gps-ops"), ok(&[24876]), at(4));
+        assert_eq!(norads(&initial_catalog(&store, at(4)).unwrap()), [24876]);
+    }
+
+    #[test]
+    fn the_catalog_version_always_increases() {
+        let store = full_store(&[1]);
+        let first = assemble(&store, 0, at(4));
+        assert_eq!(first.version, at(4).timestamp_millis() as u64);
+        // Two assemblies in the same millisecond still get different versions.
+        let second = assemble(&store, first.version, at(4));
+        assert_eq!(second.version, first.version + 1);
+        // A clock that steps back doesn't take the version with it.
+        let third = assemble(&store, second.version, at(3));
+        assert_eq!(third.version, second.version + 1);
+    }
 
     #[test]
     fn iss_apsides_match_real_orbit() {
