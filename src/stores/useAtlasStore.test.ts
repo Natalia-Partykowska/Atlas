@@ -504,6 +504,23 @@ describe('satellite feed status', () => {
     expect(real().catalogStatus).toBeNull()
   })
 
+  it('stores the names with the catalog version they belong to', () => {
+    const names = new Map([[25544, { name: 'ISS (ZARYA)', group: 'iss' as const, intlDesignator: '98067A' }]])
+    real().setSatelliteCatalog(names, 7)
+    expect(real().satelliteCatalog).toBe(names)
+    expect(real().satelliteCatalogVersion).toBe(7)
+    real().setSatelliteCatalog(names, null)
+    expect(real().satelliteCatalogVersion).toBeNull()
+  })
+
+  it('turning satellites off drops the names and their version', () => {
+    real().setSatellitesVisible(true)
+    real().setSatelliteCatalog(new Map(), 7)
+    real().setSatellitesVisible(false)
+    expect(real().satelliteCatalog).toBeNull()
+    expect(real().satelliteCatalogVersion).toBeNull()
+  })
+
   it('turning satellites off drops the catalog status', () => {
     real().setSatellitesVisible(true)
     real().setCatalogStatus({ version: 1, missingGroups: ['active'] })

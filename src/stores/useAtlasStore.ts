@@ -8,7 +8,6 @@ import type {
 } from '@/types/atlas'
 import type { ConjunctionEvent } from '@/lib/orbitStream'
 import { mergeConjunctionEvents, pruneConjunctionEvents } from '@/lib/conjunctionEvents'
-import type { SatelliteCatalogEntry } from '@/lib/satelliteCatalog'
 import { readVoiceEnabled, writeVoiceEnabled } from '@/lib/satelliteVoice'
 import { SATELLITE_FEED_OFF } from '@/lib/satelliteFeed'
 
@@ -40,6 +39,7 @@ export const useAtlasStore = create<AtlasState>((set, get) => ({
   selectedConjunction: null,
   conjunctionsReceivedFirstBatch: false,
   satelliteCatalog: null,
+  satelliteCatalogVersion: null,
   satelliteHover: EMPTY_SATELLITE_HOVER,
   selectedSatellite: null,
   satelliteVoiceEnabled: readVoiceEnabled(),
@@ -79,6 +79,7 @@ export const useAtlasStore = create<AtlasState>((set, get) => ({
             selectedConjunction: null,
             conjunctionsReceivedFirstBatch: false,
             satelliteCatalog: null,
+            satelliteCatalogVersion: null,
             satelliteHover: EMPTY_SATELLITE_HOVER,
             selectedSatellite: null,
           },
@@ -151,8 +152,8 @@ export const useAtlasStore = create<AtlasState>((set, get) => ({
             conjunctionEvents: pruneConjunctionEvents(get().conjunctionEvents, Date.now(), null),
           },
     ),
-  setSatelliteCatalog: (satelliteCatalog: Map<number, SatelliteCatalogEntry> | null) =>
-    set({ satelliteCatalog }),
+  setSatelliteCatalog: (satelliteCatalog, satelliteCatalogVersion) =>
+    set({ satelliteCatalog, satelliteCatalogVersion }),
   setSatelliteHover: (satelliteHover: SatelliteHoverState) => set({ satelliteHover }),
   // Selecting a satellite clears any in-flight conjunction selection (mutually
   // exclusive — see setSelectedConjunction), which lets go of its row too.

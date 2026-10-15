@@ -72,6 +72,9 @@ export interface AtlasState {
   conjunctionEvents: ConjunctionEvent[]
   selectedConjunction: { noradA: number; noradB: number } | null
   satelliteCatalog: Map<number, SatelliteCatalogEntry> | null
+  // The server's catalog version those names belong to; null when they came
+  // from a server that doesn't report one.
+  satelliteCatalogVersion: number | null
   satelliteHover: SatelliteHoverState
   selectedSatellite: { norad: number } | null
   // "Announce names on click" — speaks the satellite's name from the
@@ -104,7 +107,10 @@ export interface AtlasState {
   mergeConjunctionBatch: (events: ConjunctionEvent[]) => void
   clearConjunctionEvents: () => void
   setSelectedConjunction: (sel: { noradA: number; noradB: number } | null) => void
-  setSatelliteCatalog: (catalog: Map<number, SatelliteCatalogEntry> | null) => void
+  setSatelliteCatalog: (
+    catalog: Map<number, SatelliteCatalogEntry> | null,
+    version: number | null,
+  ) => void
   setSatelliteHover: (hover: SatelliteHoverState) => void
   setSelectedSatellite: (sel: { norad: number } | null) => void
   setSatelliteVoiceEnabled: (on: boolean) => void
