@@ -11,12 +11,12 @@ use tokio::sync::{broadcast, Mutex, RwLock};
 use tokio::time::{interval, Instant, MissedTickBehavior};
 use tracing::{debug, info, warn};
 
-use crate::catalog::SharedCatalog;
+use crate::catalog::{CatalogStatus, CatalogStatusRx, SharedCatalog};
 use crate::conjunctions::{self, ConjunctionEvent};
 use crate::propagate::{propagate_all, Position};
 use crate::protocol::{
-    ConjunctionBatchMsg, PositionBatchMsg, ViewportMsg, WireConjunction, MSG_CONJUNCTION_BATCH,
-    MSG_POSITION_BATCH,
+    CatalogStatusMsg, ConjunctionBatchMsg, PositionBatchMsg, ViewportMsg, WireConjunction,
+    MSG_CONJUNCTION_BATCH, MSG_POSITION_BATCH,
 };
 use crate::viewport::filter_and_encode;
 
@@ -53,6 +53,7 @@ pub struct StreamState {
     pub conj_tx: broadcast::Sender<ConjunctionsTick>,
     pub connections: Arc<AtomicUsize>,
     pub screener: ScreenerStats,
+    pub catalog_status: CatalogStatusRx,
 }
 
 pub fn spawn_broadcast_tick(
@@ -128,12 +129,31 @@ pub async fn stream_handler(
     ws.on_upgrade(move |socket| handle_socket(socket, state))
 }
 
-async fn handle_socket(socket: WebSocket, state: StreamState) {
+fn status_msg(status: &CatalogStatus) -> CatalogStatusMsg {
+    CatalogStatusMsg {
+        catalog_version: status.version,
+        missing_groups: status.missing(),
+    }
+}
+
+async fn handle_socket(mut socket: WebSocket, state: StreamState) {
+    // The catalog status goes first, so the client knows which catalog it's
+    // seeing before the first batch.
+    let mut status_rx = state.catalog_status.clone();
+    let mut sent_status = status_msg(&status_rx.borrow_and_update());
+    if socket
+        .send(Message::Binary(sent_status.frame()))
+        .await
+        .is_err()
+    {
+        return;
+    }
+
     let n = state.connections.fetch_add(1, Ordering::Relaxed) + 1;
     info!(connections = n, "client connected");
 
     let (sender, mut receiver) = socket.split();
-    // Two send tasks share this sink; the WebSocket spec forbids interleaved
+    // The send tasks share this sink; the WebSocket spec forbids interleaved
     // frames, so writes must serialise through a mutex.
     let sender = Arc::new(Mutex::new(sender));
 
@@ -248,11 +268,32 @@ async fn handle_socket(socket: WebSocket, state: StreamState) {
         }
     });
 
+    // Sends the status again when the catalog changes. The maintenance task
+    // publishes after every download pass; most change neither the version
+    // nor the missing groups (a failed retry only moves the next one).
+    let sender_s = sender.clone();
+    let send_task_status = tokio::spawn(async move {
+        while status_rx.changed().await.is_ok() {
+            let status = status_msg(&status_rx.borrow_and_update());
+            if status == sent_status {
+                continue;
+            }
+            let mut sink = sender_s.lock().await;
+            if sink.send(Message::Binary(status.frame())).await.is_err() {
+                break;
+            }
+            sent_status = status;
+        }
+    });
+
     tokio::select! {
         _ = recv_task => {},
         _ = send_task_pos => {},
         _ = send_task_conj => {},
     }
+    // It may wait hours for the next change, so it doesn't notice the
+    // client is gone.
+    send_task_status.abort();
 
     let n = state.connections.fetch_sub(1, Ordering::Relaxed) - 1;
     info!(connections = n, "client disconnected");

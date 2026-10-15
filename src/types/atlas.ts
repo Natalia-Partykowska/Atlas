@@ -1,4 +1,4 @@
-import type { ConjunctionEvent } from '@/lib/orbitStream'
+import type { CatalogStatus, ConjunctionEvent } from '@/lib/orbitStream'
 import type { SatelliteCatalogEntry } from '@/lib/satelliteCatalog'
 import type { SatelliteFeedState } from '@/lib/satelliteFeed'
 
@@ -61,6 +61,10 @@ export interface AtlasState {
   // set) and when the next reconnect attempt runs. Written only by the feed
   // controller in Map.tsx; read by the UI.
   satelliteFeed: SatelliteFeedState
+  // The live server's catalog: its version and the CelesTrak groups missing
+  // from it. Null when not live from a server that sends it (the bundled
+  // satellites, an older server). Written only by the feed controller.
+  catalogStatus: CatalogStatus | null
   // Bumped by "Retry now". Map.tsx subscribes to it and asks the feed to
   // try the server straight away.
   satelliteRetryRequest: number
@@ -68,6 +72,9 @@ export interface AtlasState {
   conjunctionEvents: ConjunctionEvent[]
   selectedConjunction: { noradA: number; noradB: number } | null
   satelliteCatalog: Map<number, SatelliteCatalogEntry> | null
+  // The server's catalog version those names belong to; null when they came
+  // from a server that doesn't report one.
+  satelliteCatalogVersion: number | null
   satelliteHover: SatelliteHoverState
   selectedSatellite: { norad: number } | null
   // "Announce names on click" — speaks the satellite's name from the
@@ -94,12 +101,16 @@ export interface AtlasState {
   setSatellitesVisible: (on: boolean) => void
   setSatelliteCount: (n: number) => void
   setSatelliteFeed: (state: SatelliteFeedState) => void
+  setCatalogStatus: (status: CatalogStatus | null) => void
   requestSatelliteRetry: () => void
   setConjunctionsVisible: (on: boolean) => void
   mergeConjunctionBatch: (events: ConjunctionEvent[]) => void
   clearConjunctionEvents: () => void
   setSelectedConjunction: (sel: { noradA: number; noradB: number } | null) => void
-  setSatelliteCatalog: (catalog: Map<number, SatelliteCatalogEntry> | null) => void
+  setSatelliteCatalog: (
+    catalog: Map<number, SatelliteCatalogEntry> | null,
+    version: number | null,
+  ) => void
   setSatelliteHover: (hover: SatelliteHoverState) => void
   setSelectedSatellite: (sel: { norad: number } | null) => void
   setSatelliteVoiceEnabled: (on: boolean) => void

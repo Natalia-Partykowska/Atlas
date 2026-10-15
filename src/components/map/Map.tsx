@@ -38,7 +38,7 @@ import { ConjunctionMidpointLayer } from '@/lib/conjunctionMidpointLayer'
 import { ConjunctionEndpointLayer } from '@/lib/conjunctionEndpointLayer'
 import type { ViewportBounds } from '@/lib/orbitStream'
 import { createSatelliteFeed } from '@/lib/satelliteFeed'
-import { fetchSatelliteCatalog } from '@/lib/satelliteCatalog'
+import { fetchSatelliteCatalog, shouldLoadCatalog } from '@/lib/satelliteCatalog'
 import { preloadSatelliteVoice, speakSatellite } from '@/lib/satelliteVoice'
 import { fetchSatelliteTLE } from '@/lib/satelliteTLE'
 import { pickNearestSatellite } from '@/lib/satellitePicking'
@@ -166,7 +166,11 @@ export default function Map() {
   const setSatelliteHover = useAtlasStore((s) => s.setSatelliteHover)
   const setSatelliteCount = useAtlasStore((s) => s.setSatelliteCount)
   const setSatelliteFeed = useAtlasStore((s) => s.setSatelliteFeed)
+  const setCatalogStatus = useAtlasStore((s) => s.setCatalogStatus)
   const feedLive = useAtlasStore((s) => s.satelliteFeed.status === 'live')
+  const catalogStatusVersion = useAtlasStore((s) => s.catalogStatus?.version ?? null)
+  const loadedCatalogVersion = useAtlasStore((s) => s.satelliteCatalogVersion)
+  const hasSatelliteCatalog = useAtlasStore((s) => s.satelliteCatalog !== null)
   const selectedSatellite = useAtlasStore((s) => s.selectedSatellite)
   const terminatorVisible = useAtlasStore((s) => s.terminatorVisible)
   const setTerminatorVisible = useAtlasStore((s) => s.setTerminatorVisible)
@@ -1268,20 +1272,28 @@ export default function Map() {
   }, [satellitesVisible])
 
   // ─── Satellite catalog fetch ─────────────────────────────────────────────
-  // Names + intl designators for the full ~17k catalog. Without this, the WS
+  // Names + intl designators for the full ~18k catalog. Without this, the WS
   // path only carries NORAD numbers and the hover tooltip would fall back to
   // "NORAD #X". Browser-cached via Cache-Control + ETag on the server.
-  // Fetched when satellites turn on, and again when the live feed comes back
-  // if that first fetch failed because the server was down.
+  // Loaded for the catalog version the server reports, and again whenever it
+  // changes (a retry restored a group), so new satellites get their names.
+  // The old names stay until the new ones arrive. A failed fetch is tried
+  // again when the version changes or the live feed comes back.
   useEffect(() => {
     if (!satellitesVisible) return
-    if (useAtlasStore.getState().satelliteCatalog) return
     const httpBase = import.meta.env.VITE_ORBIT_HTTP_URL
     if (!httpBase) return
+    const load = shouldLoadCatalog({
+      feedLive,
+      statusVersion: catalogStatusVersion,
+      loadedVersion: loadedCatalogVersion,
+      hasCatalog: hasSatelliteCatalog,
+    })
+    if (!load) return
     let cancelled = false
-    fetchSatelliteCatalog(httpBase)
+    fetchSatelliteCatalog(httpBase, catalogStatusVersion)
       .then((m) => {
-        if (!cancelled) setSatelliteCatalog(m)
+        if (!cancelled) setSatelliteCatalog(m, catalogStatusVersion)
       })
       .catch((err) => {
         if (!cancelled) console.warn('[satellite-catalog] fetch failed:', err)
@@ -1289,7 +1301,14 @@ export default function Map() {
     return () => {
       cancelled = true
     }
-  }, [satellitesVisible, feedLive, setSatelliteCatalog])
+  }, [
+    satellitesVisible,
+    feedLive,
+    catalogStatusVersion,
+    loadedCatalogVersion,
+    hasSatelliteCatalog,
+    setSatelliteCatalog,
+  ])
 
   // ─── Satellite overlay ──────────────────────────────────────────────────
   useEffect(() => {
@@ -1482,6 +1501,7 @@ export default function Map() {
         },
         conjunctions: mergeConjunctionBatch,
         status: setSatelliteFeed,
+        catalogStatus: setCatalogStatus,
       },
     })
 
@@ -1521,7 +1541,7 @@ export default function Map() {
         map.off('moveend', moveendHandler)
       }
     }
-  }, [satellitesVisible, globeMode, isMapLoaded, mergeConjunctionBatch, clearConjunctionEvents, setSatelliteCount, setSatelliteFeed])
+  }, [satellitesVisible, globeMode, isMapLoaded, mergeConjunctionBatch, clearConjunctionEvents, setSatelliteCount, setSatelliteFeed, setCatalogStatus])
 
   // ─── Conjunction overlay (selection-only) ─────────────────────────────────
   //

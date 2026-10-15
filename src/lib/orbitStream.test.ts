@@ -2,9 +2,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import {
   decodePositionBatch,
   decodeConjunctionBatch,
+  decodeCatalogStatus,
   connectOrbitStream,
   MSG_POSITION_BATCH,
   MSG_CONJUNCTION_BATCH,
+  MSG_CATALOG_STATUS,
 } from './orbitStream'
 
 // ── Binary frame builders ─────────────────────────────────────────────────────
@@ -301,6 +303,62 @@ describe('decodeConjunctionBatch', () => {
   })
 })
 
+// ── decodeCatalogStatus ───────────────────────────────────────────────────────
+//
+// The frames from the server's golden test (`server/src/protocol.rs`,
+// `a_catalog_status_frame_matches_the_golden_bytes`), so the two sides can't
+// drift apart: version 1 791 763 200 000 (2026-10-12T00:00Z), with
+// ["geo", "active"] missing, and with nothing missing.
+const PARTIAL_STATUS_HEX =
+  '03' + // MSG_CATALOG_STATUS
+  '00b8682da1010000' + // catalog_version, u64 LE
+  '0200000000000000' + // 2 missing groups
+  '0300000000000000' + '67656f' + // "geo"
+  '0600000000000000' + '616374697665' // "active"
+const COMPLETE_STATUS_HEX = '0300b8682da10100000000000000000000'
+
+function fromHex(hex: string): ArrayBuffer {
+  const bytes = new Uint8Array(hex.length / 2)
+  for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16)
+  return bytes.buffer
+}
+
+/** Decodes a whole frame, type byte included, the way the socket does. */
+const decodeStatusFrame = (frame: ArrayBuffer) =>
+  decodeCatalogStatus(new DataView(frame), 1, frame.byteLength - 1)
+
+describe('decodeCatalogStatus', () => {
+  it("decodes the server's golden frames", () => {
+    expect(new Uint8Array(fromHex(PARTIAL_STATUS_HEX))[0]).toBe(MSG_CATALOG_STATUS)
+    expect(decodeStatusFrame(fromHex(PARTIAL_STATUS_HEX))).toEqual({
+      version: 1_791_763_200_000,
+      missingGroups: ['geo', 'active'],
+    })
+    expect(decodeStatusFrame(fromHex(COMPLETE_STATUS_HEX))).toEqual({
+      version: 1_791_763_200_000,
+      missingGroups: [],
+    })
+  })
+
+  it('returns null for a frame cut short anywhere', () => {
+    const full = fromHex(PARTIAL_STATUS_HEX)
+    for (let len = 1; len < full.byteLength; len++) {
+      expect(decodeStatusFrame(full.slice(0, len)), `cut at ${len} bytes`).toBeNull()
+    }
+  })
+
+  it('returns null when the group count is absurd', () => {
+    const frame = fromHex(COMPLETE_STATUS_HEX)
+    new DataView(frame).setUint32(9, 0xffffffff, true)
+    expect(decodeStatusFrame(frame)).toBeNull()
+  })
+
+  it('ignores bytes after the last group (fields a later server may add)', () => {
+    const frame = fromHex(PARTIAL_STATUS_HEX + '0102030405060708')
+    expect(decodeStatusFrame(frame)?.missingGroups).toEqual(['geo', 'active'])
+  })
+})
+
 // ── MockWebSocket ─────────────────────────────────────────────────────────────
 
 type WsEventType = 'open' | 'message' | 'close' | 'error'
@@ -455,6 +513,27 @@ describe('connectOrbitStream', () => {
     expect(events[0].noradA).toBe(1)
     expect(events[0].missKm).toBeCloseTo(4.2, 3)
     expect(events[0].midLat).toBeCloseTo(-10, 3)
+  })
+
+  it('routes 0x03 frames to onCatalogStatus', () => {
+    const onPositions = vi.fn()
+    const onCatalogStatus = vi.fn()
+    connectOrbitStream('wss://test', { onPositions, onCatalogStatus })
+    mockWs.simulateOpen()
+    mockWs.simulateMessage(fromHex(PARTIAL_STATUS_HEX))
+    expect(onCatalogStatus).toHaveBeenCalledExactlyOnceWith({
+      version: 1_791_763_200_000,
+      missingGroups: ['geo', 'active'],
+    })
+    expect(onPositions).not.toHaveBeenCalled()
+  })
+
+  it('drops a 0x03 frame it cannot decode', () => {
+    const onCatalogStatus = vi.fn()
+    connectOrbitStream('wss://test', { onPositions: vi.fn(), onCatalogStatus })
+    mockWs.simulateOpen()
+    mockWs.simulateMessage(fromHex(PARTIAL_STATUS_HEX).slice(0, 20))
+    expect(onCatalogStatus).not.toHaveBeenCalled()
   })
 
   it('silently ignores frames with an unknown type byte', () => {

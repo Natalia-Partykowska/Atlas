@@ -402,6 +402,7 @@ mod tests {
         let catalog = Catalog {
             entries: vec![a, b],
             loaded_at: Utc::now(),
+            version: 1,
         };
         let now = Utc
             .with_ymd_and_hms(2026, 1, 1, 12, 30, 0)
@@ -462,6 +463,7 @@ mod tests {
         let catalog = Catalog {
             entries: vec![leo, geo],
             loaded_at: Utc::now(),
+            version: 1,
         };
         let now = Utc
             .with_ymd_and_hms(2026, 1, 1, 12, 30, 0)

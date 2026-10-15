@@ -461,6 +461,7 @@ describe('satellite feed status', () => {
       satellitesVisible: false,
       satelliteFeed: SATELLITE_FEED_OFF,
       satelliteRetryRequest: 0,
+      catalogStatus: null,
     })
   })
 
@@ -492,5 +493,38 @@ describe('satellite feed status', () => {
     real().setSatelliteFeed({ ...SATELLITE_FEED_OFF, status: 'limited', canRetry: true })
     real().setSatellitesVisible(false)
     expect(real().satelliteFeed).toEqual(SATELLITE_FEED_OFF)
+  })
+
+  it('starts with no catalog status and stores what the feed passes on', () => {
+    expect(real().catalogStatus).toBeNull()
+    const partial = { version: 1_791_763_200_000, missingGroups: ['active'] }
+    real().setCatalogStatus(partial)
+    expect(real().catalogStatus).toEqual(partial)
+    real().setCatalogStatus(null)
+    expect(real().catalogStatus).toBeNull()
+  })
+
+  it('stores the names with the catalog version they belong to', () => {
+    const names = new Map([[25544, { name: 'ISS (ZARYA)', group: 'iss' as const, intlDesignator: '98067A' }]])
+    real().setSatelliteCatalog(names, 7)
+    expect(real().satelliteCatalog).toBe(names)
+    expect(real().satelliteCatalogVersion).toBe(7)
+    real().setSatelliteCatalog(names, null)
+    expect(real().satelliteCatalogVersion).toBeNull()
+  })
+
+  it('turning satellites off drops the names and their version', () => {
+    real().setSatellitesVisible(true)
+    real().setSatelliteCatalog(new Map(), 7)
+    real().setSatellitesVisible(false)
+    expect(real().satelliteCatalog).toBeNull()
+    expect(real().satelliteCatalogVersion).toBeNull()
+  })
+
+  it('turning satellites off drops the catalog status', () => {
+    real().setSatellitesVisible(true)
+    real().setCatalogStatus({ version: 1, missingGroups: ['active'] })
+    real().setSatellitesVisible(false)
+    expect(real().catalogStatus).toBeNull()
   })
 })

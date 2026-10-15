@@ -18,14 +18,17 @@ use serde::Serialize;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
-use tracing::info;
+use tracing::{info, warn};
 
 mod catalog;
 mod celestrak;
 mod config;
 mod conjunctions;
+mod downloads;
 mod propagate;
 mod protocol;
+#[cfg(test)]
+mod test_support;
 mod viewport;
 mod ws;
 
@@ -39,14 +42,49 @@ struct HealthResponse {
     version: &'static str,
     catalog_size: usize,
     catalog_loaded_at: String,
+    /// No group is missing (stale groups still have their satellites).
+    catalog_complete: bool,
+    catalog_version: u64,
+    /// When missing or stale groups are downloaded again; null when every
+    /// group is fresh.
+    catalog_next_retry_at: Option<String>,
+    catalog_groups: Vec<GroupHealth>,
     connections: usize,
     screener_last_elapsed_ms: u64,
     screener_last_event_count: u64,
     screener_last_generated_epoch_ms: u64,
 }
 
+/// One CelesTrak group in `/health`.
+#[derive(Serialize)]
+struct GroupHealth {
+    group: &'static str,
+    status: catalog::GroupStatus,
+    /// Satellites in its last good download.
+    entries: usize,
+    loaded_at: Option<String>,
+    last_error: Option<String>,
+    last_error_at: Option<String>,
+}
+
+// A partial catalog is still "ok" with HTTP 200: the server works, and a
+// failing health check could get it restarted, which downloads every group
+// from CelesTrak again.
 async fn health(State(state): State<StreamState>) -> (StatusCode, Json<HealthResponse>) {
     let cat = state.catalog.load();
+    let status = state.catalog_status.borrow().clone();
+    let catalog_groups = status
+        .groups
+        .iter()
+        .map(|g| GroupHealth {
+            group: g.name,
+            status: g.status,
+            entries: g.entries,
+            loaded_at: g.loaded_at.map(|t| t.to_rfc3339()),
+            last_error: g.failure.as_ref().map(|f| f.error.clone()),
+            last_error_at: g.failure.as_ref().map(|f| f.at.to_rfc3339()),
+        })
+        .collect();
     (
         StatusCode::OK,
         Json(HealthResponse {
@@ -55,6 +93,10 @@ async fn health(State(state): State<StreamState>) -> (StatusCode, Json<HealthRes
             version: env!("CARGO_PKG_VERSION"),
             catalog_size: cat.len(),
             catalog_loaded_at: cat.loaded_at.to_rfc3339(),
+            catalog_complete: status.is_complete(),
+            catalog_version: status.version,
+            catalog_next_retry_at: status.next_retry_at.map(|t| t.to_rfc3339()),
+            catalog_groups,
             connections: state.connections.load(Ordering::Relaxed),
             screener_last_elapsed_ms: state.screener.last_elapsed_ms.load(Ordering::Relaxed),
             screener_last_event_count: state.screener.last_event_count.load(Ordering::Relaxed),
@@ -189,9 +231,19 @@ async fn main() {
         .init();
 
     let cfg = config::Config::from_env();
-    info!(port = cfg.port, origins = ?cfg.allowed_origins, "starting atlas-orbit");
+    info!(
+        port = cfg.port,
+        origins = ?cfg.allowed_origins,
+        celestrak = %cfg.celestrak_base_url,
+        "starting atlas-orbit"
+    );
 
-    let initial = catalog::load()
+    let celestrak =
+        celestrak::CelesTrak::new(&cfg.celestrak_base_url).expect("build CelesTrak HTTP client");
+    if cfg.catalog_retry_base_secs.is_some() || cfg.catalog_refresh_every_secs.is_some() {
+        warn!(schedule = ?cfg.catalog_schedule(), "catalog schedule overridden (local checks only)");
+    }
+    let (groups, initial) = downloads::load(&celestrak)
         .await
         .expect("initial catalog load failed — cannot start");
 
@@ -205,7 +257,13 @@ async fn main() {
     );
 
     let shared: SharedCatalog = Arc::new(ArcSwap::from_pointee(initial));
-    catalog::spawn_daily_refresh(shared.clone());
+    let catalog_status = downloads::spawn_catalog_maintenance(
+        shared.clone(),
+        groups,
+        celestrak,
+        cfg.catalog_schedule(),
+        downloads::SystemClock,
+    );
 
     let (tx, connections) = ws::spawn_broadcast_tick(shared.clone());
     let screener = ScreenerStats::new();
@@ -216,6 +274,7 @@ async fn main() {
         conj_tx,
         connections,
         screener,
+        catalog_status,
     };
 
     let cors = CorsLayer::new()
@@ -239,13 +298,17 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::anyhow;
     use axum::body::Body;
     use axum::http::Request;
-    use catalog::{Catalog, CatalogEntry, Group};
-    use celestrak::RawEntry;
-    use chrono::Utc;
+    use catalog::{Catalog, CatalogEntry, CatalogStatus, Group, GroupStore};
+    use celestrak::{RawEntry, SOURCES};
+    use chrono::{TimeZone, Utc};
+    use futures_util::StreamExt;
+    use protocol::CatalogStatusMsg;
     use std::sync::atomic::AtomicUsize;
-    use tokio::sync::broadcast;
+    use std::time::Duration;
+    use tokio::sync::{broadcast, watch};
     use tower::ServiceExt;
     use ws::{ScreenerStats, StreamState};
 
@@ -271,22 +334,171 @@ mod tests {
     }
 
     fn build_test_state(entries: Vec<CatalogEntry>) -> StreamState {
+        build_test_state_with(entries, catalog_status(1, &[])).0
+    }
+
+    /// Every group downloaded at 01:00 on 2026-10-12, except `missing`, whose
+    /// downloads failed.
+    fn catalog_status(version: u64, missing: &[&str]) -> CatalogStatus {
+        let loaded_at = Utc.with_ymd_and_hms(2026, 10, 12, 1, 0, 0).unwrap();
+        let mut store = GroupStore::new();
+        for (i, (_, name)) in SOURCES.iter().enumerate() {
+            let download = if missing.contains(name) {
+                Err(anyhow!("non-2xx from celestrak: 503 Service Unavailable"))
+            } else {
+                Ok(vec![test_support::tle(100 + i as u32)])
+            };
+            store.record(i, download, loaded_at);
+        }
+        let next_retry_at =
+            (!missing.is_empty()).then(|| loaded_at + chrono::Duration::minutes(30));
+        CatalogStatus::of(&store, version, next_retry_at)
+    }
+
+    /// Also returns the status sender, to change the status mid-test.
+    fn build_test_state_with(
+        entries: Vec<CatalogEntry>,
+        status: CatalogStatus,
+    ) -> (StreamState, watch::Sender<CatalogStatus>) {
         let cat = Catalog {
             entries,
             loaded_at: Utc::now(),
+            version: status.version,
         };
         let shared: catalog::SharedCatalog = Arc::new(ArcSwap::from_pointee(cat));
         let (tx, _) = broadcast::channel::<ws::PositionsTick>(4);
         let (conj_tx, _) = broadcast::channel::<ws::ConjunctionsTick>(2);
         let connections = Arc::new(AtomicUsize::new(0));
         let screener = ScreenerStats::new();
-        StreamState {
+        let (status_tx, catalog_status) = watch::channel(status);
+        let state = StreamState {
             catalog: shared,
             tx,
             conj_tx,
             connections,
             screener,
-        }
+            catalog_status,
+        };
+        (state, status_tx)
+    }
+
+    async fn get_json(app: Router, uri: &str) -> (StatusCode, serde_json::Value) {
+        let response = app
+            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (status, serde_json::from_slice(&body).unwrap())
+    }
+
+    fn group<'a>(health: &'a serde_json::Value, name: &str) -> &'a serde_json::Value {
+        health["catalog_groups"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|g| g["group"] == name)
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn health_reports_a_complete_catalog() {
+        let (state, _) = build_test_state_with(vec![], catalog_status(7, &[]));
+        let (code, health) = get_json(build_app(state), "/health").await;
+
+        assert_eq!(code, StatusCode::OK);
+        assert_eq!(health["catalog_complete"], true);
+        assert_eq!(health["catalog_version"], 7);
+        assert_eq!(health["catalog_next_retry_at"], serde_json::Value::Null);
+        let groups = health["catalog_groups"].as_array().unwrap();
+        let names: Vec<&str> = groups
+            .iter()
+            .map(|g| g["group"].as_str().unwrap())
+            .collect();
+        let sources: Vec<&str> = SOURCES.iter().map(|(_, n)| *n).collect();
+        assert_eq!(names, sources);
+        assert!(groups
+            .iter()
+            .all(|g| g["status"] == "fresh" && g["last_error"].is_null()));
+        assert_eq!(group(&health, "gps-ops")["entries"], 1);
+        assert_eq!(
+            group(&health, "gps-ops")["loaded_at"],
+            "2026-10-12T01:00:00+00:00"
+        );
+    }
+
+    #[tokio::test]
+    async fn health_reports_a_partial_catalog_and_stays_ok() {
+        let (state, _) = build_test_state_with(vec![], catalog_status(7, &["active"]));
+        let (code, health) = get_json(build_app(state), "/health").await;
+
+        // Degraded, not down: a failing check could restart the server.
+        assert_eq!(code, StatusCode::OK);
+        assert_eq!(health["status"], "ok");
+        assert_eq!(health["catalog_complete"], false);
+        assert_eq!(health["catalog_next_retry_at"], "2026-10-12T01:30:00+00:00");
+        let active = group(&health, "active");
+        assert_eq!(active["status"], "missing");
+        assert_eq!(active["entries"], 0);
+        assert_eq!(active["loaded_at"], serde_json::Value::Null);
+        assert!(active["last_error"].as_str().unwrap().contains("503"));
+        assert_eq!(active["last_error_at"], "2026-10-12T01:00:00+00:00");
+        assert_eq!(group(&health, "stations")["status"], "fresh");
+    }
+
+    type WsClient = tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >;
+
+    /// The next binary frame, skipping pings; fails after 5 s.
+    async fn next_binary(ws: &mut WsClient) -> Vec<u8> {
+        use tokio_tungstenite::tungstenite::Message;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                match ws.next().await.expect("stream open").expect("frame") {
+                    Message::Binary(bytes) => return bytes,
+                    Message::Ping(_) | Message::Pong(_) => continue,
+                    other => panic!("unexpected frame {other:?}"),
+                }
+            }
+        })
+        .await
+        .expect("a frame within 5 s")
+    }
+
+    #[tokio::test]
+    async fn the_stream_sends_the_catalog_status_first_and_again_when_it_changes() {
+        let (state, status_tx) = build_test_state_with(vec![], catalog_status(1, &["active"]));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, build_app(state)).await.unwrap() });
+        let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/stream"))
+            .await
+            .unwrap();
+
+        let first = next_binary(&mut ws).await;
+        let partial = CatalogStatusMsg {
+            catalog_version: 1,
+            missing_groups: vec!["active"],
+        };
+        assert_eq!(first, partial.frame());
+
+        // A retry failed again: only the next retry moved, so nothing is sent.
+        status_tx.send_modify(|s| {
+            s.next_retry_at = s.next_retry_at.map(|t| t + chrono::Duration::hours(1))
+        });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        // The next one worked.
+        status_tx.send_replace(catalog_status(2, &[]));
+
+        let second = next_binary(&mut ws).await;
+        let complete = CatalogStatusMsg {
+            catalog_version: 2,
+            missing_groups: vec![],
+        };
+        assert_eq!(second, complete.frame());
     }
 
     #[tokio::test]
